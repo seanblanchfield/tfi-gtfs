@@ -16,16 +16,31 @@ class CALENDAR_EXCEPTIONS:
     CALENDAR_EXCEPTION_SERVICE_ADDED = 1
     CALENDAR_EXCEPTION_SERVICE_REMOVED = 2
 
+class SCHEDULE_RELATIONSHIPS:
+    SCHEDULE_RELATIONSHIP_SCHEDULED = 0
+    SCHEDULE_RELATIONSHIP_ADDED = 1
+    SCHEDULE_RELATIONSHIP_UNSCHEDULED = 2
+    SCHEDULE_RELATIONSHIP_CANCELED = 3
 def _s2b(s):
     return s.encode('utf-8')
 
 def _b2s(b):
     return b.decode('utf-8').split(chr(0))[0]
 
-def parseLiveData(buf):
+def parseTripUpdates(buf):
     feed = gtfs_realtime_pb2.FeedMessage()
     feed.ParseFromString(buf)
-    return feed
+    trip_updates = collections.defaultdict(dict)
+    for entity in feed.entity:
+        if entity.HasField('trip_update'):
+            for stop_time_update in entity.trip_update.stop_time_update:
+                start = datetime.datetime.strptime(f"{entity.trip_update.trip.start_date} {entity.trip_update.trip.start_time}", '%Y%m%d %H:%M:%S')
+                trip_updates[stop_time_update.stop_id][entity.trip_update.trip.trip_id] = {
+                    'start': start,
+                    'delay': stop_time_update.arrival.delay,
+                    'schedule_relationship': entity.trip_update.trip.schedule_relationship
+                }
+    return trip_updates
 
 def load_agencies() -> dict:
     # open agency.txt and parse it as a CSV file, then return a dict
@@ -142,7 +157,8 @@ def load_trips() -> dict:
             route_id = row[0]
             service_id = row[1]
             trip_id = row[2]
-            trips[trip_id] = pack_trip(route_id, service_id)
+            trip_key = struct.pack('12s', _s2b(trip_id))
+            trips[trip_key] = pack_trip(route_id, service_id)
     return trips
 
 
@@ -185,10 +201,10 @@ def load_stop_times() -> dict:
 if __name__ == "__main__":
     if os.path.exists("data/cache.pickle"):
         with open("data/cache.pickle", "rb") as f:
-            print("Loading GTFS data from cache.")
+            print("Loading GTFS static data from cache.")
             routes, agencies, calendar, exceptions, stops, trips, stop_times = pickle.load(f)
     else:
-        print("Loading GTFS data from scratch.")
+        print("Loading GTFS static data from scratch.")
         routes = load_routes()
         agencies = load_agencies()
         calendar = load_calendar()
@@ -202,17 +218,20 @@ if __name__ == "__main__":
     # print("exceptions size: {}".format(size.total_size(exceptions)))
     # print("calendar size: {}".format(size.total_size(calendar)))
     # print("stops size: {}".format(size.total_size(stops)))
-    # print("trips size: {}".format(size.total_size(trips)))
+    print("trips size: {}".format(size.total_size(trips)))
     # print("stop_times size: {}".format(size.total_size(stop_times)))
 
-    def get_scheduled_arrivals(stop_code: str, max_wait: datetime.timedelta):
+    f = open("test_data/example_live_response", "rb")
+    trip_updates = parseTripUpdates(f.read())
+    f.close()
+
+    def get_scheduled_arrivals(stop_code: str, now: datetime, max_wait: datetime.timedelta):
         # get all the scheduled arrivals at a given stop_id
         # returns a list of (trip_id, arrival_time, stop_sequence)
         scheduled_arrivals = []
         stop_id = stops[stop_code]
         for trip_buffer in stop_times[stop_id]:
             trip_id, arrival_time, stop_sequence = unpack_stop_time(trip_buffer)
-            now = datetime.datetime.now()
             time_since_midnight = datetime.timedelta(hours=now.hour, minutes=now.minute, seconds=now.second)
             # if the arrival time is in the past, add one day
             if arrival_time < time_since_midnight:
@@ -221,7 +240,8 @@ if __name__ == "__main__":
             if arrival_time - time_since_midnight < max_wait:
                 # Check if service is calendared to run
                 arrival_datetime = datetime.datetime(now.year, now.month, now.day) + arrival_time
-                route_id, service_id = unpack_trip(trips[trip_id])
+                trip_key = struct.pack('12s', _s2b(trip_id))
+                route_id, service_id = unpack_trip(trips[trip_key])
                 service_is_scheduled = \
                     calendar[service_id]['start_date'] <= arrival_datetime.date() <= calendar[service_id]['end_date'] and \
                     calendar[service_id]['days'][arrival_datetime.date().weekday()]
@@ -229,24 +249,27 @@ if __name__ == "__main__":
                 # check if there is a calendar exception
                 if calendar_exception == CALENDAR_EXCEPTIONS.CALENDAR_EXCEPTION_SERVICE_ADDED or \
                     service_is_scheduled and calendar_exception != CALENDAR_EXCEPTIONS.CALENDAR_EXCEPTION_SERVICE_REMOVED:
+                    
+                    real_time_update = trip_updates.get(stops[stop_code], {}).get(trip_id)
+                    if real_time_update and real_time_update['schedule_relationship'] == SCHEDULE_RELATIONSHIPS.SCHEDULE_RELATIONSHIP_CANCELED:
+                        # service is canceled. skip it.
+                        continue
                     # service is expected to run. add it to the list.
-
                     scheduled_arrivals.append({
                         'route': routes[route_id]['name'],
                         'agency': agencies[routes[route_id]['agency']],
-                        'arrival_time': arrival_datetime,
+                        'scheduled_arrival': arrival_datetime,
+                        'real_time_arrival': arrival_datetime + datetime.timedelta(seconds=real_time_update['delay']) if real_time_update else None,
                         'stop_sequence': stop_sequence
                     })
     
         return scheduled_arrivals
     
-    arrivals = get_scheduled_arrivals("2189", datetime.timedelta(minutes=30))
-    with open("test_data/example_live_response", "rb") as f:
-        feed = parseLiveData(f.read())
-        for entity in feed.entity:
-            if entity.HasField('trip_update'):
-                # print(entity.trip_update)
-                pass
+    
+    now = datetime.datetime.now()
+    now = now.replace(hour=15, minute=20)
+    arrivals = get_scheduled_arrivals("2189", now, datetime.timedelta(minutes=30))
+        
 
 def downloadStaticGTFS():
     import settings
