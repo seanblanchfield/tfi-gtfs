@@ -40,6 +40,7 @@ class GTFS:
         self.api_key = api_key
         self.pollingPeriod = pollingPeriod
         self.lastPoll = 0
+        self.refresh_live_data()
     
     def _read_agencies(self) -> dict:
         # open agency.txt and parse it as a CSV file, then return a dict
@@ -134,11 +135,9 @@ class GTFS:
             for row in reader:
                 stop_id = row[0]
                 stop_code = row[1]
-                stop_codes[stop_id] = stop_code
+                # some stops (in Northern Ireland) don't have a stop code. Use the stop_id instead.
+                stop_codes[stop_id] = stop_code or stop_id
         return stop_codes
-    
-    def _stop_id_to_code(self, stop_id):
-        return self.stop_codes[stop_id]
     
     def _pack_trip(self, route_id, service_id):
         # bit pack the data to save space (it's easy to consume gigabytes of memory)
@@ -209,7 +208,7 @@ class GTFS:
                     sys.stdout.write('.')
                     sys.stdout.flush()
                 trip_id, arrival_time, _, stop_id, stop_sequence = row[0:5]
-                stop_code = self._stop_id_to_code(stop_id)
+                stop_code = self.stop_codes[stop_id]
                 packed_stop_time = self._pack_stop_time(trip_id, arrival_time, stop_sequence)
                 # arrival time is in the format HH:MM:SS. Pull out the hour so that trips can be 
                 # looked up by stop and hour.
@@ -246,7 +245,10 @@ class GTFS:
                     if stop_time_update.schedule_relationship != STOP_SCHEDULED:
                         continue
                     
-                    stop_code = self._stop_id_to_code(stop_time_update.stop_id)
+                    stop_code = self.stop_codes.get(stop_time_update.stop_id)
+                    if stop_code is None:
+                        logging.warning(f"Unrecognised stop_id {stop_time_update.stop_id} in live data feed.")
+                        continue
                     if entity.trip_update.trip.schedule_relationship == TRIP_ADDED:
                         # We can only work with an unscheduled "added" trip if we are given the expected arrival time.
                         if stop_time_update.arrival.time:
@@ -281,8 +283,7 @@ class GTFS:
         print(f"Got {num_updates} trip updates, {num_unrecognised_trips} unrecognised trips, {len(added_trips)} added trips, {len(cancelled_trips)} cancelled trips")
         return trip_updates, added_trips, cancelled_trips
     
-    @property
-    def _real_time_updates(self):
+    def refresh_live_data(self):
         if time.time() - self.lastPoll > self.pollingPeriod:
             try:
                 # Time to get new data
@@ -291,21 +292,17 @@ class GTFS:
                     'Cache-Control': 'no-cache'
                 })
                 f = urllib.request.urlopen(req)
-                self._trip_updates, self._added_trips, self._cancelled_trips = gtfs._parseTripUpdates(f.read())
+                self._trip_updates, self._added_trips, self._cancelled_trips = self._parseTripUpdates(f.read())
                 f.close()
                 self.lastPoll = time.time()
             except urllib.error.HTTPError as e:
                 print(f"Error fetching real time updates: {e}")
-        return self._trip_updates, self._added_trips, self._cancelled_trips
     
-    def is_cancelled(self, trip_id):
-        cancelled_trips = self._real_time_updates[2]
-        return trip_id in cancelled_trips
-    
+
     def get_real_time_delay(self, trip_id: str, stop_sequence: int):
         # find the real time update for this stop or the one with the highest sequence number
         # lower than this stop
-        updates = self._real_time_updates[0][trip_id]
+        updates = self._trip_updates[trip_id]
         delay = updates[0]['delay'] if updates else None
         for update in updates:
             if update['sequence'] > stop_sequence:
@@ -314,11 +311,8 @@ class GTFS:
             
         return delay
     
-    def get_added_trips(self, stop_code: str):
-        return self._added_trips.get(stop_code, [])
-    
     def get_scheduled_arrivals(self, stop_code: str, now: datetime, max_wait: datetime.timedelta):
-        self._real_time_updates
+        self.refresh_live_data()
         # get all the scheduled arrivals at a given stop_id
         # returns a list of (trip_id, arrival_time, stop_sequence)
         scheduled_arrivals = []
@@ -351,7 +345,8 @@ class GTFS:
                     if added or service_is_scheduled and not removed:
                         delay = self.get_real_time_delay(trip_id, stop_sequence)
                         
-                        if self.is_cancelled(trip_id):
+                        
+                        if trip_id in self._cancelled_trips:
                             continue
                         # service is expected to run. add it to the list.
                         # print(f"Adding trip {trip_info['route']} arriving at {arrival_datetime} to list of scheduled arrivals")
@@ -361,7 +356,7 @@ class GTFS:
                             'scheduled_arrival': arrival_datetime,
                             'real_time_arrival': arrival_datetime + datetime.timedelta(seconds=delay) if delay else None,
                         })
-        for added_trip in self.get_added_trips(stop_code):
+        for added_trip in self._added_trips.get(stop_code, []):
             route = self.routes[added_trip['route_id']]
             scheduled_arrivals.append({
                 'route': route['name'],
