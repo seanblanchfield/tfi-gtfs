@@ -26,15 +26,15 @@ class GTFS:
             self.agencies = self._read_agencies()
             self.calendar = self._read_calendar()
             self.exceptions = self._read_exceptions()
-            self.stops = self._read_stops()
+            self.stop_codes = self._read_stops()
             self.trips = self._read_trips()
-            self.stop_times, self.stop_times_by_trip = self._read_stop_times()
+            self.stop_times = self._read_stop_times()
             with open("data/cache.pickle", "wb") as f:
-                pickle.dump((self.routes, self.agencies, self.calendar, self.exceptions, self.stops, self.trips, self.stop_times, self.stop_times_by_trip), f)
+                pickle.dump((self.routes, self.agencies, self.calendar, self.exceptions, self.stop_codes, self.trips, self.stop_times), f)
         else:
             with open("data/cache.pickle", "rb") as f:
                 print("Loading GTFS static data from cache.")
-                self.routes, self.agencies, self.calendar, self.exceptions, self.stops, self.trips, self.stop_times, self.stop_times_by_trip = pickle.load(f)
+                self.routes, self.agencies, self.calendar, self.exceptions, self.stop_codes, self.trips, self.stop_times = pickle.load(f)
 
         self.real_time_url = real_time_url
         self.api_key = api_key
@@ -126,7 +126,7 @@ class GTFS:
     def _read_stops(self) -> dict:
         # open stops.txt and parse it as a CSV file, then return a dict
         # of stop_code -> stop_id (stop_code, as written on bus stops)
-        stops = {}
+        stop_codes = {}
         with(open("data/stops.txt", "r")) as f:
             reader = csv.reader(f)
             # skip the first row of fieldnames
@@ -134,10 +134,12 @@ class GTFS:
             for row in reader:
                 stop_id = row[0]
                 stop_code = row[1]
-                stops[stop_code] = stop_id
-        return stops
-
-
+                stop_codes[stop_id] = stop_code
+        return stop_codes
+    
+    def _stop_id_to_code(self, stop_id):
+        return self.stop_codes[stop_id]
+    
     def _pack_trip(self, route_id, service_id):
         # bit pack the data to save space (it's easy to consume gigabytes of memory)
         return struct.pack('12s4s', _s2b(route_id), _s2b(service_id))
@@ -197,8 +199,7 @@ class GTFS:
         # stop_id -> list of (trip_id, arrival_time, departure_time, stop_sequence)
         start_time = time.time()
         print("Loading stop times...", end='')
-        stop_times = collections.defaultdict(list)
-        stop_times_by_trip = collections.defaultdict(dict)
+        stop_times = collections.defaultdict(dict)
         with(open("data/stop_times.txt", "r")) as f:
             reader = csv.reader(f)
             # skip the first row of fieldnames
@@ -208,17 +209,17 @@ class GTFS:
                     sys.stdout.write('.')
                     sys.stdout.flush()
                 trip_id, arrival_time, _, stop_id, stop_sequence = row[0:5]
+                stop_code = self._stop_id_to_code(stop_id)
                 packed_stop_time = self._pack_stop_time(trip_id, arrival_time, stop_sequence)
-                stop_times[stop_id].append(packed_stop_time)
-                stop_times_by_trip[stop_id][trip_id] = packed_stop_time
+                # arrival time is in the format HH:MM:SS. Pull out the hour so that trips can be 
+                # looked up by stop and hour.
+                hour = int(arrival_time.split(':')[0])
+                if hour not in stop_times[stop_code]:
+                     stop_times[stop_code][hour] = []
+                stop_times[stop_code][hour].append(packed_stop_time)
 
-        print(f"\nLoaded {idx + 1} stop times in {time.time() - start_time} seconds")
-        return stop_times, stop_times_by_trip
-
-    def get_stop_times(self, stop_code: str):
-        stop_id = self.stops[stop_code]
-        for stop_time_buf in self.stop_times[stop_id]:
-            yield self._unpack_stop_time(stop_time_buf)
+        print(f"\nLoaded {idx + 1} stop times in {time.time() - start_time:.0f} seconds")
+        return stop_times
 
     def _parseTripUpdates(self, buf: bytes):
         # https://developers.google.com/transit/gtfs-realtime/reference#enum-schedulerelationship-2
@@ -237,29 +238,29 @@ class GTFS:
         trip_updates = collections.defaultdict(list)
         added_trips = collections.defaultdict(list)
         cancelled_trips = set()
+        num_updates, num_unrecognised_trips = 0, 0
         for entity in feed.entity:
             if entity.HasField('trip_update'):
                 trip_id = entity.trip_update.trip.trip_id
-                num_updates, num_unrecognised_trips = 0, 0
                 for stop_time_update in entity.trip_update.stop_time_update:
-                    stop_id = stop_time_update.stop_id
-                    start = datetime.datetime.strptime(f"{entity.trip_update.trip.start_date} {entity.trip_update.trip.start_time}", '%Y%m%d %H:%M:%S')
+                    if stop_time_update.schedule_relationship != STOP_SCHEDULED:
+                        continue
+                    
+                    stop_code = self._stop_id_to_code(stop_time_update.stop_id)
                     if entity.trip_update.trip.schedule_relationship == TRIP_ADDED:
                         # We can only work with an unscheduled "added" trip if we are given the expected arrival time.
                         if stop_time_update.arrival.time:
-                            added_trips[stop_id].append({
+                            added_trips[stop_code].append({
                                 'route_id': entity.trip_update.trip.route_id,
                                 'arrival': datetime.datetime.fromtimestamp(stop_time_update.arrival.time)                            })
                     elif entity.trip_update.trip.schedule_relationship == TRIP_CANCELLED:
                         cancelled_trips.add(trip_id)
-                    elif entity.trip_update.trip.schedule_relationship == TRIP_SCHEDULED and stop_time_update.schedule_relationship == STOP_SCHEDULED:
+                    elif entity.trip_update.trip.schedule_relationship == TRIP_SCHEDULED:
                         trip_info = self.get_trip_info(trip_id)
                         if trip_info is None:
                             num_unrecognised_trips += 1
                             continue
 
-                        scheduled_stop_time = self.stop_times_by_trip[stop_id][trip_id]
-                        stop_id, arrival_time, stop_sequence = self._unpack_stop_time(scheduled_stop_time)
                         delay = arrival_time = None
                         if stop_time_update.arrival.time:
                             arrival_time = datetime.datetime.fromtimestamp(stop_time_update.arrival.time)
@@ -272,8 +273,8 @@ class GTFS:
                                 continue
                         num_updates += 1
                         trip_updates[trip_id].append({
-                            'stop_id': stop_id,
                             'sequence': stop_time_update.stop_sequence,
+                            'stop_code': stop_code,
                             'delay': delay,
                             'arrival_time': arrival_time,
                         })
@@ -314,43 +315,52 @@ class GTFS:
         return delay
     
     def get_added_trips(self, stop_code: str):
-        stop_id = self.stops[stop_code]
-        return self._added_trips.get(stop_id, [])
+        return self._added_trips.get(stop_code, [])
     
     def get_scheduled_arrivals(self, stop_code: str, now: datetime, max_wait: datetime.timedelta):
+        self._real_time_updates
         # get all the scheduled arrivals at a given stop_id
         # returns a list of (trip_id, arrival_time, stop_sequence)
         scheduled_arrivals = []
-        for trip_id, arrival_time, stop_sequence in self.get_stop_times(stop_code):
-            time_since_midnight = datetime.timedelta(hours=now.hour, minutes=now.minute, seconds=now.second)
-            # if the arrival time is in the past, add one day
-            if arrival_time < time_since_midnight:
-                arrival_time += datetime.timedelta(days=1)
-            # if time to arrival is soon
-            if arrival_time - time_since_midnight < max_wait:
-                # Check if service is calendared to run
-                arrival_datetime = datetime.datetime(now.year, now.month, now.day) + arrival_time
-                trip_info = self.get_trip_info(trip_id)
-                service_is_scheduled = \
-                    trip_info['start_date'] <= arrival_datetime.date() <= trip_info['end_date'] and \
-                    trip_info['days'][arrival_datetime.date().weekday()]
-                calendar_exception = self.get_exception(trip_info['service_id'], arrival_datetime.date())
-                # check if there is a calendar exception
-                added = calendar_exception == 1
-                removed = calendar_exception == 2
-                if added or service_is_scheduled and not removed:
-                    delay = self.get_real_time_delay(trip_id, stop_sequence)
-                    
-                    if self.is_cancelled(trip_id):
-                        continue
-                    # service is expected to run. add it to the list.
-                    # print(f"Adding trip {trip_info['route']} arriving at {arrival_datetime} to list of scheduled arrivals")
-                    scheduled_arrivals.append({
-                        'route': trip_info['route'],
-                        'agency': trip_info['agency'],
-                        'scheduled_arrival': arrival_datetime,
-                        'real_time_arrival': arrival_datetime + datetime.timedelta(seconds=delay) if delay else None,
-                    })
+        # try the previous hour and the next few (per max_wait)
+        try_hours: list
+        if now.hour < 23:
+            try_hours = [now.hour - 1]
+        else:
+            try_hours = [23, 0]
+        try_hours.extend([h % 24 for h in range(now.hour, now.hour + int(max_wait.total_seconds() // 3600) + 1)])
+        for hour in try_hours:
+            for packed_stop_time in self.stop_times[stop_code].get(hour, []):
+                trip_id, arrival_time, stop_sequence = self._unpack_stop_time(packed_stop_time)
+                time_since_midnight = datetime.timedelta(hours=now.hour, minutes=now.minute, seconds=now.second)
+                # if the arrival time is in the past, add one day
+                if arrival_time < time_since_midnight:
+                    arrival_time += datetime.timedelta(days=1)
+                # if time to arrival is soon
+                if arrival_time - time_since_midnight < max_wait:
+                    # Check if service is calendared to run
+                    arrival_datetime = datetime.datetime(now.year, now.month, now.day) + arrival_time
+                    trip_info = self.get_trip_info(trip_id)
+                    service_is_scheduled = \
+                        trip_info['start_date'] <= arrival_datetime.date() <= trip_info['end_date'] and \
+                        trip_info['days'][arrival_datetime.date().weekday()]
+                    calendar_exception = self.get_exception(trip_info['service_id'], arrival_datetime.date())
+                    # check if there is a calendar exception
+                    added = calendar_exception == 1
+                    removed = calendar_exception == 2
+                    if added or service_is_scheduled and not removed:
+                        delay = self.get_real_time_delay(trip_id, stop_sequence)
+                        
+                        if self.is_cancelled(trip_id):
+                            continue
+                        # service is expected to run. add it to the list.
+                        # print(f"Adding trip {trip_info['route']} arriving at {arrival_datetime} to list of scheduled arrivals")
+                        scheduled_arrivals.append({
+                            'route': trip_info['route'],
+                            'agency': trip_info['agency'],
+                            'scheduled_arrival': arrival_datetime,
+                            'real_time_arrival': arrival_datetime + datetime.timedelta(seconds=delay) if delay else None,
+                        })
         for added_trip in self.get_added_trips(stop_code):
             route = self.routes[added_trip['route_id']]
             scheduled_arrivals.append({
