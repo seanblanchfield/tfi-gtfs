@@ -28,13 +28,13 @@ class GTFS:
             self.exceptions = self._read_exceptions()
             self.stops = self._read_stops()
             self.trips = self._read_trips()
-            self.stop_times = self._read_stop_times()
+            self.stop_times, self.stop_times_by_trip = self._read_stop_times()
             with open("data/cache.pickle", "wb") as f:
-                pickle.dump((self.routes, self.agencies, self.calendar, self.exceptions, self.stops, self.trips, self.stop_times, self._stop_trip_arrival_times), f)
+                pickle.dump((self.routes, self.agencies, self.calendar, self.exceptions, self.stops, self.trips, self.stop_times, self.stop_times_by_trip), f)
         else:
             with open("data/cache.pickle", "rb") as f:
                 print("Loading GTFS static data from cache.")
-                self.routes, self.agencies, self.calendar, self.exceptions, self.stops, self.trips, self.stop_times, self._stop_trip_arrival_times = pickle.load(f)
+                self.routes, self.agencies, self.calendar, self.exceptions, self.stops, self.trips, self.stop_times, self.stop_times_by_trip = pickle.load(f)
 
         self.real_time_url = real_time_url
         self.api_key = api_key
@@ -183,14 +183,14 @@ class GTFS:
         # split arrival_time into hours and minutes
         arrival_time_hrs, arrival_time_mins, arrival_time_secs = [int(x) for x in arrival_time.split(':')]
         # bit pack the data to save space (it's easy to consume gigabytes of memory)
-        return struct.pack('12s4b8s', _s2b(trip_id), arrival_time_hrs, arrival_time_mins, arrival_time_secs, int(stop_sequence), _s2b(arrival_time))
+        return struct.pack('12s4b', _s2b(trip_id), arrival_time_hrs, arrival_time_mins, arrival_time_secs, int(stop_sequence))
 
     def _unpack_stop_time(self, trip_buffer):
         # unpack the data from the bit packed format
-        trip_id, arrival_time_hrs, arrival_time_mins, arrival_time_secs, stop_sequence, arrival_time_orig = struct.unpack('12s4b8s', trip_buffer)
+        trip_id, arrival_time_hrs, arrival_time_mins, arrival_time_secs, stop_sequence = struct.unpack('12s4b', trip_buffer)
         # express arrival time as a timedelta since midnight
         arrival_time = datetime.timedelta(hours=arrival_time_hrs, minutes=arrival_time_mins, seconds=arrival_time_secs)
-        return _b2s(trip_id), arrival_time, stop_sequence, _b2s(arrival_time_orig)
+        return _b2s(trip_id), arrival_time, stop_sequence
 
     def _read_stop_times(self) -> dict:
         # open stop_times.txt and parse it as a CSV file, then return a dict
@@ -198,7 +198,7 @@ class GTFS:
         start_time = time.time()
         print("Loading stop times...", end='')
         stop_times = collections.defaultdict(list)
-        self._stop_trip_arrival_times = collections.defaultdict(dict)
+        stop_times_by_trip = collections.defaultdict(dict)
         with(open("data/stop_times.txt", "r")) as f:
             reader = csv.reader(f)
             # skip the first row of fieldnames
@@ -210,10 +210,10 @@ class GTFS:
                 trip_id, arrival_time, _, stop_id, stop_sequence = row[0:5]
                 packed_stop_time = self._pack_stop_time(trip_id, arrival_time, stop_sequence)
                 stop_times[stop_id].append(packed_stop_time)
-                self._stop_trip_arrival_times[stop_id][trip_id] = packed_stop_time
+                stop_times_by_trip[stop_id][trip_id] = packed_stop_time
 
-        print(f"Loaded {idx + 1} stop times in {time.time() - start_time} seconds")
-        return stop_times
+        print(f"\nLoaded {idx + 1} stop times in {time.time() - start_time} seconds")
+        return stop_times, stop_times_by_trip
 
     def get_stop_times(self, stop_code: str):
         stop_id = self.stops[stop_code]
@@ -239,41 +239,43 @@ class GTFS:
         cancelled_trips = set()
         for entity in feed.entity:
             if entity.HasField('trip_update'):
+                trip_id = entity.trip_update.trip.trip_id
                 num_updates, num_unrecognised_trips = 0, 0
                 for stop_time_update in entity.trip_update.stop_time_update:
+                    stop_id = stop_time_update.stop_id
                     start = datetime.datetime.strptime(f"{entity.trip_update.trip.start_date} {entity.trip_update.trip.start_time}", '%Y%m%d %H:%M:%S')
                     if entity.trip_update.trip.schedule_relationship == TRIP_ADDED:
                         # We can only work with an unscheduled "added" trip if we are given the expected arrival time.
                         if stop_time_update.arrival.time:
-                            added_trips[stop_time_update.stop_id].append({
+                            added_trips[stop_id].append({
                                 'route_id': entity.trip_update.trip.route_id,
                                 'arrival': datetime.datetime.fromtimestamp(stop_time_update.arrival.time)                            })
                     elif entity.trip_update.trip.schedule_relationship == TRIP_CANCELLED:
-                        cancelled_trips.add(entity.trip_update.trip.trip_id)
+                        cancelled_trips.add(trip_id)
                     elif entity.trip_update.trip.schedule_relationship == TRIP_SCHEDULED and stop_time_update.schedule_relationship == STOP_SCHEDULED:
-                        trip_info = self.get_trip_info(entity.trip_update.trip.trip_id)
+                        trip_info = self.get_trip_info(trip_id)
                         if trip_info is None:
-                            # logging.error("Trip ID %s is not recognised.", entity.trip_update.trip.trip_id)
                             num_unrecognised_trips += 1
                             continue
 
-                        # stop_arrival_times = self._stop_trip_arrival_times[stop_time_update.stop_id]
-                        # if entity.trip_update.trip.trip_id not in stop_arrival_times:
-                        #     # logging.error("Trip ID %s is not recorded in _stop_trip_arrival_times.", entity.trip_update.trip.trip_id)
-                        #     num_unrecognised_trips += 1
-                        #     continue
-                        stop_id, arrival_time, stop_sequence, orig_arrival_time = self._unpack_stop_time(self._stop_trip_arrival_times[stop_time_update.stop_id][entity.trip_update.trip.trip_id])
-                        # print(f"Got live info for route {trip_info['route']} scheduled to stop at {stop_time_update.stop_id} (seq. {stop_sequence}) at {arrival_time} / {orig_arrival_time}")
+                        scheduled_stop_time = self.stop_times_by_trip[stop_id][trip_id]
+                        stop_id, arrival_time, stop_sequence = self._unpack_stop_time(scheduled_stop_time)
+                        delay = arrival_time = None
+                        if stop_time_update.arrival.time:
+                            arrival_time = datetime.datetime.fromtimestamp(stop_time_update.arrival.time)
+                        else:
+                            delay = stop_time_update.arrival.delay
+                            # Ignore delays greater than a week
+                            # Some updates contain delays that are approximately equal to the timestamp but negative.
+                            # These are presumed to be due to a bug in the NTA code. ignore them.
+                            if delay < -60 * 60 * 24 * 7: 
+                                continue
                         num_updates += 1
-                        # `stop_time_update.arrival` might have `time` instead of delay, in which case it is a POSIX timestamp that can be decoded with
-                        # datetime.datetime.fromtimestamp(stop_time_update.arrival.time)
-                        # the next update might have an arrival time with an erroneous delay, basically
-                        # a negative timestamp roughly equal to -1 * timestamp from previous update.
-
-                        trip_updates[entity.trip_update.trip.trip_id].append({
-                            'stop_id': stop_time_update.stop_id,
+                        trip_updates[trip_id].append({
+                            'stop_id': stop_id,
                             'sequence': stop_time_update.stop_sequence,
-                            'delay': stop_time_update.arrival.delay                        
+                            'delay': delay,
+                            'arrival_time': arrival_time,
                         })
         print(f"Got {num_updates} trip updates, {num_unrecognised_trips} unrecognised trips, {len(added_trips)} added trips, {len(cancelled_trips)} cancelled trips")
         return trip_updates, added_trips, cancelled_trips
@@ -319,7 +321,7 @@ class GTFS:
         # get all the scheduled arrivals at a given stop_id
         # returns a list of (trip_id, arrival_time, stop_sequence)
         scheduled_arrivals = []
-        for trip_id, arrival_time, stop_sequence, orig_arrival_time in self.get_stop_times(stop_code):
+        for trip_id, arrival_time, stop_sequence in self.get_stop_times(stop_code):
             time_since_midnight = datetime.timedelta(hours=now.hour, minutes=now.minute, seconds=now.second)
             # if the arrival time is in the past, add one day
             if arrival_time < time_since_midnight:
