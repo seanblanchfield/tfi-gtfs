@@ -225,7 +225,7 @@ class GTFS:
         TRIP_SCHEDULED = 0
         TRIP_ADDED = 1
         TRIP_UNSCHEDULED = 2
-        TRIP_CANCELED = 3
+        TRIP_CANCELLED = 3
 
         # https://developers.google.com/transit/gtfs-realtime/reference#enum-schedulerelationship
         STOP_SCHEDULED = 0
@@ -236,7 +236,7 @@ class GTFS:
         feed.ParseFromString(buf)
         trip_updates = collections.defaultdict(list)
         added_trips = collections.defaultdict(list)
-        canceled_trips = set()
+        cancelled_trips = set()
         for entity in feed.entity:
             if entity.HasField('trip_update'):
                 num_updates, num_unrecognised_trips = 0, 0
@@ -248,8 +248,8 @@ class GTFS:
                             added_trips[stop_time_update.stop_id].append({
                                 'route_id': entity.trip_update.trip.route_id,
                                 'arrival': datetime.datetime.fromtimestamp(stop_time_update.arrival.time)                            })
-                    elif entity.trip_update.trip.schedule_relationship == TRIP_CANCELED:
-                        canceled_trips.add(entity.trip_update.trip.trip_id)
+                    elif entity.trip_update.trip.schedule_relationship == TRIP_CANCELLED:
+                        cancelled_trips.add(entity.trip_update.trip.trip_id)
                     elif entity.trip_update.trip.schedule_relationship == TRIP_SCHEDULED and stop_time_update.schedule_relationship == STOP_SCHEDULED:
                         trip_info = self.get_trip_info(entity.trip_update.trip.trip_id)
                         if trip_info is None:
@@ -275,8 +275,8 @@ class GTFS:
                             'sequence': stop_time_update.stop_sequence,
                             'delay': stop_time_update.arrival.delay                        
                         })
-        print(f"Got {num_updates} trip updates, {num_unrecognised_trips} unrecognised trips, {len(added_trips)} added trips, {len(canceled_trips)} canceled trips")
-        return trip_updates, added_trips, canceled_trips
+        print(f"Got {num_updates} trip updates, {num_unrecognised_trips} unrecognised trips, {len(added_trips)} added trips, {len(cancelled_trips)} cancelled trips")
+        return trip_updates, added_trips, cancelled_trips
     
     @property
     def _real_time_updates(self):
@@ -288,16 +288,16 @@ class GTFS:
                     'Cache-Control': 'no-cache'
                 })
                 f = urllib.request.urlopen(req)
-                self._trip_updates, self._added_trips, self._canceled_trips = gtfs._parseTripUpdates(f.read())
+                self._trip_updates, self._added_trips, self._cancelled_trips = gtfs._parseTripUpdates(f.read())
                 f.close()
                 self.lastPoll = time.time()
             except urllib.error.HTTPError as e:
                 print(f"Error fetching real time updates: {e}")
-        return self._trip_updates, self._added_trips, self._canceled_trips
+        return self._trip_updates, self._added_trips, self._cancelled_trips
     
-    def is_canceled(self, trip_id):
-        canceled_trips = self._real_time_updates[2]
-        return trip_id in canceled_trips
+    def is_cancelled(self, trip_id):
+        cancelled_trips = self._real_time_updates[2]
+        return trip_id in cancelled_trips
     
     def get_real_time_delay(self, trip_id: str, stop_sequence: int):
         # find the real time update for this stop or the one with the highest sequence number
@@ -339,7 +339,7 @@ class GTFS:
                 if added or service_is_scheduled and not removed:
                     delay = self.get_real_time_delay(trip_id, stop_sequence)
                     
-                    if self.is_canceled(trip_id):
+                    if self.is_cancelled(trip_id):
                         continue
                     # service is expected to run. add it to the list.
                     # print(f"Adding trip {trip_info['route']} arriving at {arrival_datetime} to list of scheduled arrivals")
