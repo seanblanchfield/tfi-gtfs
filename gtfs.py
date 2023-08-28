@@ -489,7 +489,7 @@ if __name__ == "__main__":
         if not gtfs.is_valid_stop_number(stop_number):
             print(f"Stop number {stop_number} is not recognised.")
             continue
-        arrivals = gtfs.get_scheduled_arrivals(stop_number, now, datetime.timedelta(minutes=60))
+        arrivals = gtfs.get_scheduled_arrivals(stop_number, now, datetime.timedelta(minutes=args.max_wait))
         for arrival in arrivals:
             rt_arrival = "N/A"
             if arrival['real_time_arrival']:
