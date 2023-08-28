@@ -19,27 +19,33 @@ def _b2s(b):
     return b.decode('utf-8').split(chr(0))[0]
 
 class GTFS:
-    def __init__(self, real_time_url:str, api_key: str, nocache:bool = False, polling_period:int=60, live_data_expiry:int=60*10):
-        if nocache or not os.path.exists("data/cache.pickle"):
+    def __init__(self, live_url:str, api_key: str, no_cache:bool = False, polling_period:int=60):
+        if no_cache or not os.path.exists("data/cache.pickle"):
             logging.info("Loading GTFS static data from scratch.")
             self.routes = self._read_routes()
             self.agencies = self._read_agencies()
             self.calendar = self._read_calendar()
             self.exceptions = self._read_exceptions()
-            self.stop_codes = self._read_stops()
+            self.stop_numbers = self._read_stops()
             self.trips = self._read_trips()
             self.stop_times = self._read_stop_times()
             with open("data/cache.pickle", "wb") as f:
-                pickle.dump((self.routes, self.agencies, self.calendar, self.exceptions, self.stop_codes, self.trips, self.stop_times), f)
+                pickle.dump((self.routes, self.agencies, self.calendar, self.exceptions, self.stop_numbers, self.trips, self.stop_times), f)
         else:
             with open("data/cache.pickle", "rb") as f:
                 logging.info("Loading GTFS static data from cache.")
-                self.routes, self.agencies, self.calendar, self.exceptions, self.stop_codes, self.trips, self.stop_times = pickle.load(f)
+                self.routes, self.agencies, self.calendar, self.exceptions, self.stop_numbers, self.trips, self.stop_times = pickle.load(f)
 
-        self.real_time_url = real_time_url
+        self.live_url = live_url
         self.api_key = api_key
         self.polling_period = polling_period
         self.last_poll = 0
+        self.poll_backoff = 0
+        self._live_data = {
+            'delays': collections.defaultdict(list),
+            'added': collections.defaultdict(list),
+            'cancelled': dict()
+        }
         self.refresh_live_data()
     
     def _read_agencies(self) -> dict:
@@ -126,18 +132,18 @@ class GTFS:
 
     def _read_stops(self) -> dict:
         # open stops.txt and parse it as a CSV file, then return a dict
-        # of stop_code -> stop_id (stop_code, as written on bus stops)
-        stop_codes = {}
+        # of stop_number -> stop_id (stop_number, as written on bus stops)
+        stop_numbers = {}
         with(open("data/stops.txt", "r")) as f:
             reader = csv.reader(f)
             # skip the first row of fieldnames
             next(reader)
             for row in reader:
                 stop_id = row[0]
-                stop_code = row[1]
+                stop_number = row[1]
                 # some stops (in Northern Ireland) don't have a stop code. Use the stop_id instead.
-                stop_codes[stop_id] = stop_code or stop_id
-        return stop_codes
+                stop_numbers[stop_id] = stop_number or stop_id
+        return stop_numbers
     
     def _pack_trip(self, route_id, service_id):
         # bit pack the data to save space (it's easy to consume gigabytes of memory)
@@ -208,14 +214,14 @@ class GTFS:
                     sys.stdout.write('.')
                     sys.stdout.flush()
                 trip_id, arrival_time, _, stop_id, stop_sequence = row[0:5]
-                stop_code = self.stop_codes[stop_id]
+                stop_number = self.stop_numbers[stop_id]
                 packed_stop_time = self._pack_stop_time(trip_id, arrival_time, stop_sequence)
                 # arrival time is in the format HH:MM:SS. Pull out the hour so that trips can be 
                 # looked up by stop and hour.
                 hour = int(arrival_time.split(':')[0]) % 24
-                if hour not in stop_times[stop_code]:
-                     stop_times[stop_code][hour] = []
-                stop_times[stop_code][hour].append(packed_stop_time)
+                if hour not in stop_times[stop_number]:
+                     stop_times[stop_number][hour] = []
+                stop_times[stop_number][hour].append(packed_stop_time)
 
         logging.info(f"\nLoaded {idx + 1} stop times in {time.time() - start_time:.0f} seconds")
         return stop_times
@@ -250,15 +256,15 @@ class GTFS:
                     if stop_time_update.schedule_relationship != STOP_SCHEDULED:
                         continue
                     
-                    stop_code = self.stop_codes.get(stop_time_update.stop_id)
-                    if stop_code is None:
+                    stop_number = self.stop_numbers.get(stop_time_update.stop_id)
+                    if stop_number is None:
                         logging.warning(f"Unrecognised stop_id {stop_time_update.stop_id} in live data feed.")
                         continue
                     if entity.trip_update.trip.schedule_relationship == TRIP_ADDED:
                         # We can only work with an unscheduled "added" trip if we are given the expected arrival time.
                         if stop_time_update.arrival.time:
                             num_added += 1
-                            self._live_data['added'][stop_code].append({
+                            self._live_data['added'][stop_number].append({
                                 'route_id': entity.trip_update.trip.route_id,
                                 'arrival': datetime.datetime.fromtimestamp(stop_time_update.arrival.time),
                                 'timestamp': timestamp
@@ -287,7 +293,7 @@ class GTFS:
                         num_updates += 1
                         self._live_data['delays'][trip_id].append({
                             'stop_sequence': stop_time_update.stop_sequence,
-                            'stop_code': stop_code,
+                            'stop_number': stop_number,
                             'delay': delay,
                             'arrival_time': arrival_time,
                             'timestamp': timestamp
@@ -295,22 +301,31 @@ class GTFS:
         logging.info(f"Got {num_updates} trip updates, {num_unrecognised_trips} unrecognised trips, {num_added} added trips, {num_cancelled} cancelled trips")
     
     def refresh_live_data(self):
-        if time.time() - self.last_poll > self.polling_period:
+        now = time.time()
+        if now - self.last_poll > self.polling_period + self.poll_backoff:
             try:
                 # Time to get new data
-                req = urllib.request.Request(self.real_time_url, None, {
+                req = urllib.request.Request(self.live_url, None, {
                     'x-api-key': self.api_key,
                     'Cache-Control': 'no-cache'
                 })
                 f = urllib.request.urlopen(req)
                 self._parse_live_data(f.read())
                 f.close()
-                self.last_poll = time.time()
+                self.last_poll = now
+                self.poll_backoff = 0
             except urllib.error.HTTPError as e:
                 logging.error(f"Error fetching real time updates: {e}")
+                # so long as we get rate-limited, back off exponentially
+                if e.code == 429:
+                    self.last_poll = now
+                    self.poll_backoff += self.polling_period
     
 
     def get_live_delay(self, trip_id: str, stop_sequence: int):
+        if self._live_data is None:
+            # no live data available, possibly due to rate limiting.
+            return None
         # find the real time update for this stop or the one with the highest sequence number
         # lower than this stop
         if trip_id in self._live_data['delays']:
@@ -336,8 +351,10 @@ class GTFS:
             else:
                 return updates[left - 1]['delay']
 
+    def is_valid_stop_number(self, stop_number: str):
+        return stop_number in self.stop_times 
     
-    def get_scheduled_arrivals(self, stop_code: str, now: datetime, max_wait: datetime.timedelta):
+    def get_scheduled_arrivals(self, stop_number: str, now: datetime, max_wait: datetime.timedelta):
         self.refresh_live_data()
         # get all the scheduled arrivals at a given stop_id
         # returns a list of (trip_id, arrival_time, stop_sequence)
@@ -350,7 +367,7 @@ class GTFS:
             try_hours = [now.hour - 1]
         try_hours.extend([h % 24 for h in range(now.hour, now.hour + int(max_wait.total_seconds() // 3600) + 1)])
         for hour in try_hours:
-            for packed_stop_time in self.stop_times[stop_code].get(hour, []):
+            for packed_stop_time in self.stop_times[stop_number].get(hour, []):
                 trip_id, arrival_time, stop_sequence = self._unpack_stop_time(packed_stop_time)
                 time_since_midnight = datetime.timedelta(hours=now.hour, minutes=now.minute, seconds=now.second)
                 # if the arrival time over 12 hours in the past, assume it refers to tomorrow and add one day.
@@ -385,7 +402,7 @@ class GTFS:
                         scheduled_arrivals.append(arrival)
         
         # add any added trips
-        for added_trip in self._live_data['added'].get(stop_code, []):
+        for added_trip in self._live_data['added'].get(stop_number, []):
             route = self.routes[added_trip['route_id']]
             scheduled_arrivals.append({
                 'route': route['name'],
@@ -396,12 +413,68 @@ class GTFS:
         scheduled_arrivals.sort(key=lambda x: x['real_time_arrival'] or x['scheduled_arrival'])
         return scheduled_arrivals
 
+
+def downloadStaticGTFS():
+    # download the GTFS zip file and extract it into the data directory
+    import urllib.request
+    import zipfile
+    import io
+    logging.info(f"Downloading GTFS data from {settings.GTFS_STATIC_URL}")
+    with urllib.request.urlopen(settings.GTFS_STATIC_URL) as response:
+        with zipfile.ZipFile(io.BytesIO(response.read())) as zip_ref:
+            # copy old .txt files in "data" directory to "data/bak"
+            import shutil
+            if os.path.exists("data/bak"):
+                shutil.rmtree("data/bak")
+            os.mkdir("data/bak")
+            # only copy .txt files
+            for file in os.listdir("data"):
+                if file.endswith(".txt"):
+                    shutil.copy(os.path.join("data", file), "data/bak/")
+            # extract the new .txt files into "data"
+            zip_ref.extractall("data")
+            # remove the cache file
+            if os.path.exists("data/cache.pickle"):
+                os.remove("data/cache.pickle")
+    logging.info("Done.")
+
 import settings
 if __name__ == "__main__":
+
+    # Read program options for live_url, api_key, no_cache, polling_period and the max_wait time
+    import argparse
+    parser = argparse.ArgumentParser(description='Perform a live query against the API for upcoming scheduled arrivals.')
+    parser.add_argument('-l', '--live_url', type=str, default=settings.GTFS_LIVE_URL,
+                        help='URL of the live GTFS feed')
+    parser.add_argument('-k', '--api_key', type=str, default=settings.API_KEY,
+                        help='API key for the live GTFS feed')
+    parser.add_argument('--no_cache', action='store_true',default=False,
+                        help='Ignore cached GTFS data and load static data from scratch')
+    parser.add_argument('-p', '--polling_period', type=int, default=60,
+                        help='Polling period for live GTFS feed')
+    parser.add_argument('-w', '--max_wait', type=int, default=60,
+                        help='Maximum minutes in the future to return results for')
+    parser.add_argument('--download', action='store_true', default=False,
+                        help='Download and extract the static GTFS archive and exit')
+    parser.add_argument('stop_numbers', metavar='stop numbers', type=str, nargs='*',
+                        help='Stop numbers to query (as shown on the bus stop)')
+    
+    args = parser.parse_args()
+    # if the --download option was specified, download the static GTFS archive and exit
+    if args.download:
+        downloadStaticGTFS()
+        sys.exit(0)
+    # additional unnamed arguments specify a list of stop codes to query
+    if not args.stop_numbers:
+        # print an error message and exit if no stop codes were specified
+        print("No stop numbers specified.")
+        sys.exit(1)
+
     gtfs = GTFS(
-        real_time_url=settings.GTFS_REALTIME_URL, 
-        api_key=settings.API_KEY, 
-        nocache=False
+        live_url=args.live_url, 
+        api_key=args.api_key, 
+        no_cache=args.no_cache,
+        polling_period=args.polling_period
     )
     
     # print("exceptions size: {}".format(size.total_size(exceptions)))
@@ -412,26 +485,17 @@ if __name__ == "__main__":
     # print("routes size: {}".format(size.total_size(routes)))
     
     now = datetime.datetime.now()
-    # now = now.replace(hour=00)
-    arrivals = gtfs.get_scheduled_arrivals("2189", now, datetime.timedelta(minutes=60))
-    # arrivals = gtfs.get_scheduled_arrivals("455591", now, datetime.timedelta(minutes=30))
-    for arrival in arrivals:
-        rt_arrival = "N/A"
-        if arrival['real_time_arrival']:
-            if arrival['real_time_arrival'].year == 1970:
-                rt_arrival = "epoch"
-            else:
-                rt_arrival = arrival['real_time_arrival'].strftime('%H:%M')
-        print(f"{arrival['route']}, {arrival['scheduled_arrival'].strftime('%H:%M')}, {rt_arrival}")
+    for stop_number in args.stop_numbers:
+        if not gtfs.is_valid_stop_number(stop_number):
+            print(f"Stop number {stop_number} is not recognised.")
+            continue
+        arrivals = gtfs.get_scheduled_arrivals(stop_number, now, datetime.timedelta(minutes=60))
+        for arrival in arrivals:
+            rt_arrival = "N/A"
+            if arrival['real_time_arrival']:
+                if arrival['real_time_arrival'].year == 1970:
+                    rt_arrival = "epoch"
+                else:
+                    rt_arrival = arrival['real_time_arrival'].strftime('%H:%M')
+            print(f"{stop_number}, {arrival['route']}, {arrival['scheduled_arrival'].strftime('%H:%M')}, {rt_arrival}")
 
-def downloadStaticGTFS():
-    url = settings.GTFS_FEED_URL
-    # download the GTFS zip file and extract it into the data directory
-    import urllib.request
-    import zipfile
-    import io
-    logging.info(f"Downloading GTFS data from {url}")
-    with urllib.request.urlopen(url) as response:
-        with zipfile.ZipFile(io.BytesIO(response.read())) as zip_ref:
-            zip_ref.extractall("data")
-    logging.info("Done.")
