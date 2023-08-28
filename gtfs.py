@@ -19,9 +19,9 @@ def _b2s(b):
     return b.decode('utf-8').split(chr(0))[0]
 
 class GTFS:
-    def __init__(self, real_time_url:str, api_key: str, nocache:bool = False, pollingPeriod:int=60):
+    def __init__(self, real_time_url:str, api_key: str, nocache:bool = False, polling_period:int=60, live_data_expiry:int=60*10):
         if nocache or not os.path.exists("data/cache.pickle"):
-            print("Loading GTFS static data from scratch.")
+            logging.info("Loading GTFS static data from scratch.")
             self.routes = self._read_routes()
             self.agencies = self._read_agencies()
             self.calendar = self._read_calendar()
@@ -33,13 +33,13 @@ class GTFS:
                 pickle.dump((self.routes, self.agencies, self.calendar, self.exceptions, self.stop_codes, self.trips, self.stop_times), f)
         else:
             with open("data/cache.pickle", "rb") as f:
-                print("Loading GTFS static data from cache.")
+                logging.info("Loading GTFS static data from cache.")
                 self.routes, self.agencies, self.calendar, self.exceptions, self.stop_codes, self.trips, self.stop_times = pickle.load(f)
 
         self.real_time_url = real_time_url
         self.api_key = api_key
-        self.pollingPeriod = pollingPeriod
-        self.lastPoll = 0
+        self.polling_period = polling_period
+        self.last_poll = 0
         self.refresh_live_data()
     
     def _read_agencies(self) -> dict:
@@ -217,7 +217,7 @@ class GTFS:
                      stop_times[stop_code][hour] = []
                 stop_times[stop_code][hour].append(packed_stop_time)
 
-        print(f"\nLoaded {idx + 1} stop times in {time.time() - start_time:.0f} seconds")
+        logging.info(f"\nLoaded {idx + 1} stop times in {time.time() - start_time:.0f} seconds")
         return stop_times
 
     def _parse_live_data(self, buf: bytes):
@@ -232,12 +232,17 @@ class GTFS:
         STOP_SKIPPED = 1
         STOP_NO_DATA = 2
 
+        # data structure into which updates from the live feed will be loaded.
+        self._live_data = {
+            'delays': collections.defaultdict(list),
+            'added': collections.defaultdict(list),
+            'cancelled': dict()
+        }
+
         feed = gtfs_realtime_pb2.FeedMessage()
         feed.ParseFromString(buf)
-        trip_updates = collections.defaultdict(list)
-        added_trips = collections.defaultdict(list)
-        cancelled_trips = set()
-        num_updates, num_unrecognised_trips = 0, 0
+        timestamp = feed.header.timestamp
+        num_updates, num_unrecognised_trips, num_added, num_cancelled = 0, 0, 0, 0
         for entity in feed.entity:
             if entity.HasField('trip_update'):
                 trip_id = entity.trip_update.trip.trip_id
@@ -252,11 +257,17 @@ class GTFS:
                     if entity.trip_update.trip.schedule_relationship == TRIP_ADDED:
                         # We can only work with an unscheduled "added" trip if we are given the expected arrival time.
                         if stop_time_update.arrival.time:
-                            added_trips[stop_code].append({
+                            num_added += 1
+                            self._live_data['added'][stop_code].append({
                                 'route_id': entity.trip_update.trip.route_id,
-                                'arrival': datetime.datetime.fromtimestamp(stop_time_update.arrival.time)                            })
+                                'arrival': datetime.datetime.fromtimestamp(stop_time_update.arrival.time),
+                                'timestamp': timestamp
+                            })
                     elif entity.trip_update.trip.schedule_relationship == TRIP_CANCELLED:
-                        cancelled_trips.add(trip_id)
+                        num_cancelled += 1
+                        self._live_data['cancelled'][trip_id] = {
+                            'timestamp': timestamp
+                        }
                     elif entity.trip_update.trip.schedule_relationship == TRIP_SCHEDULED:
                         trip_info = self.get_trip_info(trip_id)
                         if trip_info is None:
@@ -274,21 +285,17 @@ class GTFS:
                             if delay < -60 * 60 * 24 * 7: 
                                 continue
                         num_updates += 1
-                        trip_updates[trip_id].append({
+                        self._live_data['delays'][trip_id].append({
                             'stop_sequence': stop_time_update.stop_sequence,
                             'stop_code': stop_code,
                             'delay': delay,
                             'arrival_time': arrival_time,
+                            'timestamp': timestamp
                         })
-        print(f"Got {num_updates} trip updates, {num_unrecognised_trips} unrecognised trips, {len(added_trips)} added trips, {len(cancelled_trips)} cancelled trips")
-        return {
-            'delays': trip_updates,
-            'added': added_trips, 
-            'cancelled': cancelled_trips
-        }
+        logging.info(f"Got {num_updates} trip updates, {num_unrecognised_trips} unrecognised trips, {num_added} added trips, {num_cancelled} cancelled trips")
     
     def refresh_live_data(self):
-        if time.time() - self.lastPoll > self.pollingPeriod:
+        if time.time() - self.last_poll > self.polling_period:
             try:
                 # Time to get new data
                 req = urllib.request.Request(self.real_time_url, None, {
@@ -296,11 +303,11 @@ class GTFS:
                     'Cache-Control': 'no-cache'
                 })
                 f = urllib.request.urlopen(req)
-                self._live_data = self._parse_live_data(f.read())
+                self._parse_live_data(f.read())
                 f.close()
-                self.lastPoll = time.time()
+                self.last_poll = time.time()
             except urllib.error.HTTPError as e:
-                print(f"Error fetching real time updates: {e}")
+                logging.error(f"Error fetching real time updates: {e}")
     
 
     def get_live_delay(self, trip_id: str, stop_sequence: int):
@@ -375,7 +382,6 @@ class GTFS:
                     # if it has not already arrived, add it to the list.
                     if arrival['scheduled_arrival'] > now or \
                         (arrival['real_time_arrival'] and arrival['real_time_arrival'] > now):
-                        print(f"adding {trip_info['route']} {trip_info['agency']} {trip_info['service_id']} {arrival_datetime}")
                         scheduled_arrivals.append(arrival)
         
         # add any added trips
@@ -410,7 +416,6 @@ if __name__ == "__main__":
     arrivals = gtfs.get_scheduled_arrivals("2189", now, datetime.timedelta(minutes=60))
     # arrivals = gtfs.get_scheduled_arrivals("455591", now, datetime.timedelta(minutes=30))
     for arrival in arrivals:
-        # print(arrival)
         rt_arrival = "N/A"
         if arrival['real_time_arrival']:
             if arrival['real_time_arrival'].year == 1970:
@@ -425,8 +430,8 @@ def downloadStaticGTFS():
     import urllib.request
     import zipfile
     import io
-    print(f"Downloading GTFS data from {url}")
+    logging.info(f"Downloading GTFS data from {url}")
     with urllib.request.urlopen(url) as response:
         with zipfile.ZipFile(io.BytesIO(response.read())) as zip_ref:
             zip_ref.extractall("data")
-    print("Done.")
+    logging.info("Done.")
