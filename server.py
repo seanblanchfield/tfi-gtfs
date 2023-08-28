@@ -104,4 +104,4 @@ if __name__ == "__main__":
     
     # start server
     print("Waiting for requests...")
-    waitress.serve(app, host=args.host, port=args.port)
+    waitress.serve(app, host=args.host, port=args.port, threads=1)
