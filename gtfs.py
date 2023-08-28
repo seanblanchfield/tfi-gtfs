@@ -5,12 +5,11 @@ import collections
 import time
 import sys
 import struct
-import pickle
 import urllib.request
 import logging
 from google.transit import gtfs_realtime_pb2
 
-import size
+import memstore
 
 def _s2b(s):
     return s.encode('utf-8')
@@ -19,69 +18,59 @@ def _b2s(b):
     return b.decode('utf-8').split(chr(0))[0]
 
 class GTFS:
-    def __init__(self, live_url:str, api_key: str, no_cache:bool = False, polling_period:int=60):
-        if no_cache or not os.path.exists("data/cache.pickle"):
+    def __init__(self, live_url:str, api_key: str, no_cache:bool = False, polling_period:int=60, profile_memory:bool=False):
+        self.store = memstore.MemStore(keys_config={
+            'trip': {'struct_fmt': '12s4s'},
+            'stop_times': {'struct_fmt': '12s4b'},
+        })
+        if self.store.get("initialized") is None:
             logging.info("Loading GTFS static data from scratch.")
-            self.routes = self._read_routes()
-            self.agencies = self._read_agencies()
-            self.calendar = self._read_calendar()
-            self.exceptions = self._read_exceptions()
-            self.stop_numbers = self._read_stops()
-            self.trips = self._read_trips()
-            self.stop_times = self._read_stop_times()
-            with open("data/cache.pickle", "wb") as f:
-                pickle.dump((self.routes, self.agencies, self.calendar, self.exceptions, self.stop_numbers, self.trips, self.stop_times), f)
+            self._read_routes()
+            self._read_agencies()
+            self._read_calendar()
+            self._read_exceptions()
+            self._read_stops()
+            self._read_trips()
+            self._read_stop_times()
+            self.store.set("initialized", True)
+            self.store.store_cache()
         else:
-            with open("data/cache.pickle", "rb") as f:
-                logging.info("Loading GTFS static data from cache.")
-                self.routes, self.agencies, self.calendar, self.exceptions, self.stop_numbers, self.trips, self.stop_times = pickle.load(f)
+            logging.info("Loading GTFS static data from cache.")
 
         self.live_url = live_url
         self.api_key = api_key
         self.polling_period = polling_period
         self.last_poll = 0
         self.poll_backoff = 0
-        self._live_data = {
-            'delays': collections.defaultdict(list),
-            'added': collections.defaultdict(list),
-            'cancelled': dict()
-        }
-        self.refresh_live_data()
+        self._refresh_live_data()
+        
+        if profile_memory:
+            logging.info("Profiling memory usage...")
+            logging.info(f"Total memory size is {self.store.profile_memory() / 1024 / 1024:.0f} MB")
     
-    def _read_agencies(self) -> dict:
-        # open agency.txt and parse it as a CSV file, then return a dict
-        # keyed on agency_id
-        agencies = {}
+    def _read_agencies(self):
         with(open("data/agency.txt", "r")) as f:
             reader = csv.reader(f)
             # skip the first row of fieldnames
             next(reader)
             for row in reader:
                 agency_id, agency_name = row[0:2]
-                agencies[agency_id] = agency_name
-        return agencies
+                self.store.set(f"agency:{agency_id}", agency_name)
 
-    def _read_routes(self) -> dict:
-        # open routes.txt and parse it as a CSV file, then return a dict
-        # keyed on route_id
-        routes = {}
+    def _read_routes(self):
         with(open("data/routes.txt", "r")) as f:
             reader = csv.reader(f)
             # skip the first row of fieldnames
             next(reader)
             for row in reader:
                 route_id, agency, short_name = row[0:3]
-                routes[route_id] = {
+                self.store.set(f"route:{route_id}", {
                     'name': short_name,
                     'agency': agency
-                }
-        return routes
+                })
 
-    def _read_calendar(self) -> dict:
-        # open calendar.txt and parse it as a CSV file, then return a dict
-        # keyed on service_id
+    def _read_calendar(self):
         # each service_id maps to a dict keyed on day of week
-        calendar = {}
         earliest_date = datetime.date.today()
         latest_date = datetime.date(1970, 1, 1)
         with(open("data/calendar.txt", "r")) as f:
@@ -94,28 +83,18 @@ class GTFS:
                 end_date = datetime.datetime.strptime(row[9], '%Y%m%d').date()
                 # days represented by '0' or '1'. Convert to bools.
                 days = [bool(int(day)) for day in row[1:8]]
-                calendar[service_id] = {
+                self.store.set(f"service:{service_id}", {
                     'start_date': start_date,
                     'end_date': end_date,
                     'days': days
-                }
+                })
                 if start_date < earliest_date:
                     earliest_date = start_date
                 if end_date > latest_date:
                     latest_date = end_date
         print(f"Loaded calendar with start dates ranging from {earliest_date} to {latest_date}")
-        return calendar
 
-    def _read_exceptions(self) -> dict:
-        # open calendar_dates.txt and parse it as a CSV file, then return a dict
-        # keyed on service_id, which maps to a dict keyed on date, which maps to 
-        # exception type.
-        # {
-        #      <service_id>: {
-        #          <date>: <exception_type>
-        #      }
-        # }
-        exceptions = collections.defaultdict(dict)
+    def _read_exceptions(self):
         with(open("data/calendar_dates.txt", "r")) as f:
             reader = csv.reader(f)
             # skip the first row of fieldnames
@@ -124,16 +103,11 @@ class GTFS:
                 service_id = row[0]
                 date = datetime.datetime.strptime(row[1], '%Y%m%d').date()
                 exception_type = int(row[2])
-                exceptions[service_id][date] = exception_type
-        return exceptions
+                self.store.set(f"exception:{service_id}:{date}", exception_type)
 
-    def get_exception(self, service_id, date):
-        return self.exceptions.get(service_id, {}).get(date)
-
-    def _read_stops(self) -> dict:
+    def _read_stops(self):
         # open stops.txt and parse it as a CSV file, then return a dict
         # of stop_number -> stop_id (stop_number, as written on bus stops)
-        stop_numbers = {}
         with(open("data/stops.txt", "r")) as f:
             reader = csv.reader(f)
             # skip the first row of fieldnames
@@ -142,8 +116,8 @@ class GTFS:
                 stop_id = row[0]
                 stop_number = row[1]
                 # some stops (in Northern Ireland) don't have a stop code. Use the stop_id instead.
-                stop_numbers[stop_id] = stop_number or stop_id
-        return stop_numbers
+                self.store.set(f"stop:{stop_id}", stop_number or stop_id)
+                self.store.add(f"stop_numbers", stop_number or stop_id)
     
     def _pack_trip(self, route_id, service_id):
         # bit pack the data to save space (it's easy to consume gigabytes of memory)
@@ -157,7 +131,6 @@ class GTFS:
     def _read_trips(self) -> dict:
         # open trips.txt and parse it as a CSV file, then return a dict
         # that maps trip_id -> route_id and service_id
-        trips = {}
         with(open("data/trips.txt", "r")) as f:
             reader = csv.reader(f)
             # skip the first row of fieldnames
@@ -166,38 +139,35 @@ class GTFS:
                 route_id = row[0]
                 service_id = row[1]
                 trip_id = row[2]
-                trip_key = struct.pack('12s', _s2b(trip_id))
-                trips[trip_key] = self._pack_trip(route_id, service_id)
-        return trips
+                self.store.set(f"trip:{trip_id}", self._pack_trip(route_id, service_id))
 
     def get_trip_info(self, trip_id):
-        trip_key = struct.pack('12s', _s2b(trip_id))
         try:
-            route_id, service_id = self._unpack_trip(self.trips[trip_key])
+            route_id, service_id = self._unpack_trip(self.store.get(f"trip:{trip_id}"))
+            route_info = self.store.get(f"route:{route_id}")
+            agency_info = self.store.get(f"agency:{route_info['agency']}")
+            calendar_info = self.store.get(f"service:{service_id}")
             return {
-                'route': self.routes[route_id]['name'],
-                'agency': self.agencies[self.routes[route_id]['agency']],
+                'route': route_info['name'],
+                'agency': agency_info,
                 'service_id': service_id,
-                'start_date': self.calendar[service_id]['start_date'],
-                'end_date': self.calendar[service_id]['end_date'],
-                'days': self.calendar[service_id]['days']
+                'start_date': calendar_info['start_date'],
+                'end_date': calendar_info['end_date'],
+                'days': calendar_info['days']
             }
         except KeyError:
             return None
 
 
-    def _pack_stop_time(self, trip_id, arrival_time, stop_sequence):
-        # split arrival_time into hours and minutes
-        arrival_time_hrs, arrival_time_mins, arrival_time_secs = [int(x) for x in arrival_time.split(':')]
+    def _pack_stop_data(self, trip_id, arrival_hour, arrival_min, arrival_sec, stop_sequence):
         # bit pack the data to save space (it's easy to consume gigabytes of memory)
-        return struct.pack('12s4b', _s2b(trip_id), arrival_time_hrs, arrival_time_mins, arrival_time_secs, int(stop_sequence))
+        return struct.pack('12s4b', _s2b(trip_id), arrival_hour, arrival_min, arrival_sec, int(stop_sequence))
 
-    def _unpack_stop_time(self, trip_buffer):
+    def _unpack_stop_data(self, trip_buffer):
         # unpack the data from the bit packed format
-        trip_id, arrival_time_hrs, arrival_time_mins, arrival_time_secs, stop_sequence = struct.unpack('12s4b', trip_buffer)
+        trip_id, arrival_hour, arrival_min, arrival_sec, stop_sequence = struct.unpack('12s4b', trip_buffer)
         # express arrival time as a timedelta since midnight
-        arrival_time = datetime.timedelta(hours=arrival_time_hrs, minutes=arrival_time_mins, seconds=arrival_time_secs)
-        return _b2s(trip_id), arrival_time, stop_sequence
+        return _b2s(trip_id), arrival_hour, arrival_min, arrival_sec, stop_sequence
 
     def _read_stop_times(self) -> dict:
         # open stop_times.txt and parse it as a CSV file, then return a dict
@@ -214,17 +184,19 @@ class GTFS:
                     sys.stdout.write('.')
                     sys.stdout.flush()
                 trip_id, arrival_time, _, stop_id, stop_sequence = row[0:5]
-                stop_number = self.stop_numbers[stop_id]
-                packed_stop_time = self._pack_stop_time(trip_id, arrival_time, stop_sequence)
+                stop_number = self.store.get(f"stop:{stop_id}")
+                arrival_hour, arrival_min, arrival_sec = [int(x) for x in arrival_time.split(':')]
                 # arrival time is in the format HH:MM:SS. Pull out the hour so that trips can be 
                 # looked up by stop and hour.
-                hour = int(arrival_time.split(':')[0]) % 24
+                hour = arrival_hour % 24
                 if hour not in stop_times[stop_number]:
                      stop_times[stop_number][hour] = []
-                stop_times[stop_number][hour].append(packed_stop_time)
+                stop_times[stop_number][hour].append(self._pack_stop_data(trip_id, arrival_hour, arrival_min, arrival_sec, stop_sequence))
 
         logging.info(f"\nLoaded {idx + 1} stop times in {time.time() - start_time:.0f} seconds")
-        return stop_times
+        for stop_number in stop_times:
+            for hour in stop_times[stop_number]:
+                self.store.set(f"stop_times:{stop_number}:{hour}", stop_times[stop_number][hour])
 
     def _parse_live_data(self, buf: bytes):
         # https://developers.google.com/transit/gtfs-realtime/reference#enum-schedulerelationship-2
@@ -239,12 +211,6 @@ class GTFS:
         STOP_NO_DATA = 2
 
         # data structure into which updates from the live feed will be loaded.
-        self._live_data = {
-            'delays': collections.defaultdict(list),
-            'added': collections.defaultdict(list),
-            'cancelled': dict()
-        }
-
         feed = gtfs_realtime_pb2.FeedMessage()
         feed.ParseFromString(buf)
         timestamp = feed.header.timestamp
@@ -252,11 +218,12 @@ class GTFS:
         for entity in feed.entity:
             if entity.HasField('trip_update'):
                 trip_id = entity.trip_update.trip.trip_id
+                trip_delays = []
                 for stop_time_update in entity.trip_update.stop_time_update:
                     if stop_time_update.schedule_relationship != STOP_SCHEDULED:
                         continue
                     
-                    stop_number = self.stop_numbers.get(stop_time_update.stop_id)
+                    stop_number = self.store.get(f"stop:{stop_time_update.stop_id}")
                     if stop_number is None:
                         logging.warning(f"Unrecognised stop_id {stop_time_update.stop_id} in live data feed.")
                         continue
@@ -264,13 +231,14 @@ class GTFS:
                         # We can only work with an unscheduled "added" trip if we are given the expected arrival time.
                         if stop_time_update.arrival.time:
                             num_added += 1
-                            self._live_data['added'][stop_number].append({
+                            self.store.set(f"live_additions:{stop_number}", {
                                 'route_id': entity.trip_update.trip.route_id,
                                 'arrival': datetime.datetime.fromtimestamp(stop_time_update.arrival.time),
                                 'timestamp': timestamp
                             })
                     elif entity.trip_update.trip.schedule_relationship == TRIP_CANCELLED:
                         num_cancelled += 1
+                        self.store.set(f"live_cancelations:{trip_id}", True)
                         self._live_data['cancelled'][trip_id] = {
                             'timestamp': timestamp
                         }
@@ -291,16 +259,17 @@ class GTFS:
                             if delay < -60 * 60 * 24 * 7: 
                                 continue
                         num_updates += 1
-                        self._live_data['delays'][trip_id].append({
+                        trip_delays.append({
                             'stop_sequence': stop_time_update.stop_sequence,
                             'stop_number': stop_number,
                             'delay': delay,
                             'arrival_time': arrival_time,
                             'timestamp': timestamp
                         })
+                self.store.set(f"live_delays:{trip_id}", trip_delays)
         logging.info(f"Got {num_updates} trip updates, {num_unrecognised_trips} unrecognised trips, {num_added} added trips, {num_cancelled} cancelled trips")
     
-    def refresh_live_data(self):
+    def _refresh_live_data(self):
         now = time.time()
         if now - self.last_poll > self.polling_period + self.poll_backoff:
             try:
@@ -322,14 +291,11 @@ class GTFS:
                     self.poll_backoff += self.polling_period
     
 
-    def get_live_delay(self, trip_id: str, stop_sequence: int):
-        if self._live_data is None:
-            # no live data available, possibly due to rate limiting.
-            return None
+    def _get_live_delay(self, trip_id: str, stop_sequence: int):
         # find the real time update for this stop or the one with the highest sequence number
         # lower than this stop
-        if trip_id in self._live_data['delays']:
-            updates = self._live_data['delays'][trip_id]
+        updates = self.store.get(f"live_delays:{trip_id}")
+        if updates:
             # updates is a sorted list of dicts, each of which contain a stop_sequence and delay
             # binary search through the list to find the item with the closest stop_sequence that is 
             # less than or equal to the stop_sequence we are looking for
@@ -352,10 +318,10 @@ class GTFS:
                 return updates[left - 1]['delay']
 
     def is_valid_stop_number(self, stop_number: str):
-        return stop_number in self.stop_times 
+        return self.store.has("stop_numbers", stop_number)
     
     def get_scheduled_arrivals(self, stop_number: str, now: datetime, max_wait: datetime.timedelta):
-        self.refresh_live_data()
+        self._refresh_live_data()
         # get all the scheduled arrivals at a given stop_id
         # returns a list of (trip_id, arrival_time, stop_sequence)
         scheduled_arrivals = []
@@ -367,9 +333,14 @@ class GTFS:
             try_hours = [now.hour - 1]
         try_hours.extend([h % 24 for h in range(now.hour, now.hour + int(max_wait.total_seconds() // 3600) + 1)])
         for hour in try_hours:
-            for packed_stop_time in self.stop_times[stop_number].get(hour, []):
-                trip_id, arrival_time, stop_sequence = self._unpack_stop_time(packed_stop_time)
+            for packed_stop_data in self.store.get(f"stop_times:{stop_number}:{hour}"):
+                trip_id, arrival_hour, arrival_min, arrival_sec, stop_sequence = self._unpack_stop_data(packed_stop_data)
                 time_since_midnight = datetime.timedelta(hours=now.hour, minutes=now.minute, seconds=now.second)
+                
+                # arrival time is stored as HH:MM:SS. Convert to datetime.
+                arrival_time = datetime.timedelta(hours=arrival_hour, minutes=arrival_min, seconds=arrival_sec)
+                stop_sequence = int(stop_sequence)
+
                 # if the arrival time over 12 hours in the past, assume it refers to tomorrow and add one day.
                 if time_since_midnight - datetime.timedelta(hours=12) > arrival_time:
                     arrival_time += datetime.timedelta(days=1)
@@ -381,20 +352,20 @@ class GTFS:
                 service_is_scheduled = \
                     trip_info['start_date'] <= arrival_datetime.date() <= trip_info['end_date'] and \
                     trip_info['days'][arrival_datetime.date().weekday()]
-                calendar_exception = self.get_exception(trip_info['service_id'], arrival_datetime.date())
+                calendar_exception = self.store.get(f"exception:{trip_info['service_id']}:{arrival_datetime.date()}")
                 # check if there is a calendar exception
                 added = calendar_exception == 1
                 removed = calendar_exception == 2
                 if added or service_is_scheduled and not removed:
-                    delay = self.get_live_delay(trip_id, stop_sequence)
-                    if trip_id in self._live_data['cancelled']:
+                    delay = self._get_live_delay(trip_id, stop_sequence)
+                    if self.store.has('live_cancelations', trip_id):
                         continue
                     # We expect this arrival.
                     arrival = {
                         'route': trip_info['route'],
                         'agency': trip_info['agency'],
                         'scheduled_arrival': arrival_datetime,
-                        'real_time_arrival': arrival_datetime + datetime.timedelta(seconds=delay) if delay else None,
+                        'real_time_arrival': arrival_datetime + datetime.timedelta(seconds=delay) if delay is not None else None,
                     }
                     # if it has not already arrived, add it to the list.
                     if arrival['scheduled_arrival'] > now or \
@@ -402,11 +373,12 @@ class GTFS:
                         scheduled_arrivals.append(arrival)
         
         # add any added trips
-        for added_trip in self._live_data['added'].get(stop_number, []):
-            route = self.routes[added_trip['route_id']]
+        for added_trip in self.store.get(f"live_additions:{stop_number}", []):
+            route_info = self.store.get(f"route:{added_trip['route_id']}")
+            agency_info = self.store.get(f"agency:{route_info['agency']}")
             scheduled_arrivals.append({
-                'route': route['name'],
-                'agency': self.agencies[route['agency']],
+                'route': route_info['name'],
+                'agency': agency_info['name'],
                 'scheduled_arrival': added_trip['arrival'],
                 'real_time_arrival': added_trip['arrival'],
             })
@@ -450,8 +422,12 @@ if __name__ == "__main__":
                         help='API key for the live GTFS feed')
     parser.add_argument('--no_cache', action='store_true',default=False,
                         help='Ignore cached GTFS data and load static data from scratch')
+    parser.add_argument('--profile', action='store_true',default=False,
+                        help='Profile memory usage')
     parser.add_argument('-p', '--polling_period', type=int, default=60,
                         help='Polling period for live GTFS feed')
+    parser.add_argument('--logging', type=str, choices=['DEBUG', 'INFO', 'WARN', 'ERROR'], default=settings.LOG_LEVEL, dest='log_level',
+                        help='Print verbose output')
     parser.add_argument('-w', '--max_wait', type=int, default=60,
                         help='Maximum minutes in the future to return results for')
     parser.add_argument('--download', action='store_true', default=False,
@@ -470,20 +446,17 @@ if __name__ == "__main__":
         print("No stop numbers specified.")
         sys.exit(1)
 
+    
+    logging.basicConfig(level=getattr(logging, args.log_level))
+
     gtfs = GTFS(
         live_url=args.live_url, 
         api_key=args.api_key, 
         no_cache=args.no_cache,
-        polling_period=args.polling_period
+        polling_period=args.polling_period,
+        profile_memory=args.profile
     )
-    
-    # print("exceptions size: {}".format(size.total_size(exceptions)))
-    # print("calendar size: {}".format(size.total_size(calendar)))
-    # print("stops size: {}".format(size.total_size(stops)))
-    # print("trips size: {}".format(size.total_size(trips)))
-    # print("stop_times size: {}".format(size.total_size(stop_times)))
-    # print("routes size: {}".format(size.total_size(routes)))
-    
+        
     now = datetime.datetime.now()
     for stop_number in args.stop_numbers:
         if not gtfs.is_valid_stop_number(stop_number):

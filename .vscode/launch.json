@@ -12,6 +12,10 @@
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
+                "--profile",
+                "--logging",
+                "WARN",
+                "2189"
             ]
         }
     ]
