@@ -5,35 +5,35 @@ import pickle
 import redis
 import time
 import logging
+import collections
 
 import size
 
-CACHE_PATH = "data/cache.pickle"
+DATA_PATH = "data/data.pickle"
 
 class MemStore:
-    def __init__(self, redis_url:str=None, no_cache:bool = False, keys_config:dict[dict[str]]={}):
-        # Keys_config is a dictionary specifying treatment of different pieces of data.
+    def __init__(self, redis_url:str=None, no_cache:bool = False, namespace_config:dict[dict[str]]={}):
+        # namespace_config is a dictionary specifying treatment of different pieces of data.
         # Each key is the prefix ending before the first '%' in keys that it should be matched against.
         # Potential values are:
-        #  - memoize: store the value in memory as well as redis for faster retrieval next time
+        #  - cache: store the value in memory as well as redis for faster retrieval next time
         #  - expiry: set an expiry time on the key
-        self.keys_config = keys_config
-        self.data = {}
-        self.cache = {}
+        self.namespace_config = namespace_config
+        self.data = collections.defaultdict(dict)
         if redis_url:
             self.redis = redis.from_url(redis_url)
         else:
             self.redis = None
-            if os.path.exists(CACHE_PATH) and not no_cache:
-                with open(CACHE_PATH, "rb") as f:
+            if os.path.exists(DATA_PATH) and not no_cache:
+                with open(DATA_PATH, "rb") as f:
                     logging.info("Loading GTFS static data from cache.")
                     self.data = pickle.load(f)
     
-    def store_cache(self):
+    def persist_data(self):
         if self.redis:
             self.redis.save()
         else:
-            with open(CACHE_PATH, "wb") as f:
+            with open(DATA_PATH, "wb") as f:
                 pickle.dump(self.data, f)
     
     def profile_memory(self):
@@ -41,68 +41,68 @@ class MemStore:
             return self.redis.info('memory')
         else:
             return size.total_size(self.data)
-    
-    def _get_key_config(self, key):
-        return self.keys_config.get(key.split(':')[0], {})
 
-    def get(self, key, default=None):
-        config = self._get_key_config(key)
-        if self.redis:
-            t = int(time.time())
-            
-            if config.get('memoize') and key in self.cache:
-                cache_t, cache_value = self.cache[key]
-                expiry = config.get('expiry')
-                if expiry is None or t - cache_t < expiry:
-                    return cache_value
-                else:
-                    del self.cache[key]
-            value = self.redis.get(key)
-            if value is not None:
-                value = pickle.loads(value)
+    def get(self, namespace, key, default=None):
+        config = self.namespace_config.get(namespace, {})
+        now = int(time.time())
+        expiry = config.get('expiry')
+        
+        value = None
+        cached_item = self.data.get(namespace, {}).get(key)
+        if cached_item:
+            t, cached_value = cached_item
+            if expiry is None or now - t < expiry:
+                value = cached_value
             else:
-                value = default
-            
-            if config.get('memoize'):
-                t = int(time.time())
-                self.cache[key] = (t, value)
-            return value
-        else:
-            value = self.data.get(key)
+                del self.data[namespace][key]
+        
+        if value is None and self.redis:
+            value = self.redis.hget(namespace, key)
+            if value is not None:
+                t, value = pickle.loads(value)
+                if expiry and now - t > expiry:
+                    # if it's expired, delete it
+                    self.redis.hdel(namespace, key)
+                    value = None
+            # if we still don't have a value, use the default
             if value is None:
-                return default
-            return value
-    
-    def set(self, key, value):
-        config = self._get_key_config(key)
+                value = default
+            # cache the value if we're supposed to
+            if config.get('cache'):
+                self.data[namespace][key] = (now, value)
+        
+        return value if value is not None else default
+
+    def set(self, namespace, key, value):
+        config = self.namespace_config.get(namespace, {})
         t = int(time.time())
+        expiry = config.get('expiry')
         if self.redis:
-            expiry = config.get('expiry')
-            self.redis.set(key, pickle.dumps(value), ex=expiry)
+            self.redis.hset(namespace, key, pickle.dumps((t, value)))
         else:
-            self.data[key] = value
+            self.data[namespace][key] = (t, value)
     
     # set operations including add, remove and has
-    def add(self, key, value):
-        config = self._get_key_config(key)
+    def add(self, namespace, value):
+        config = self.namespace_config.get(namespace, {})
         if self.redis:
-            self.redis.sadd(key, value)
+            self.redis.sadd(namespace, value)
         else:
-            self.data.setdefault(key, set()).add(value)
+            self.data.setdefault(namespace, set()).add(value)
     
-    def remove(self, key, value):
-        config = self._get_key_config(key)
+    def remove(self, namespace, value):
+        config = self.namespace_config.get(namespace, {})
         if self.redis:
-            self.redis.srem(key, value)
+            self.redis.srem(namespace, value)
         else:
-            self.data.setdefault(key, set()).remove(value)
+            self.data.setdefault(namespace, set()).remove(value)
     
-    def has(self, key, value):
-        config = self._get_key_config(key)
+    def has(self, namespace, value):
+        config = self.namespace_config.get(namespace, {})
         if self.redis:
-            return self.redis.sismember(key, value)
+            return self.redis.sismember(namespace, value) == 1
         else:
-            return value in self.data.setdefault(key, set())
+            return value in self.data.setdefault(namespace, set())
         
 
     

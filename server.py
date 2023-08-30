@@ -9,6 +9,7 @@
 # /api/v1/arrivals?stop=7602&stop=7603
 
 import datetime
+import logging
 
 from flask import Flask, jsonify, request, Response
 from flask_cors import CORS
@@ -78,6 +79,8 @@ if __name__ == "__main__":
                         help='URL of a redis instance to use as a data store backend')
     parser.add_argument('--no_cache', action='store_true',default=False,
                         help='Ignore cached GTFS data and load static data from scratch')
+    parser.add_argument('--logging', type=str, choices=['DEBUG', 'INFO', 'WARN', 'ERROR'], default=settings.LOG_LEVEL, dest='log_level',
+                        help='Print verbose output')
     parser.add_argument('-p', '--polling_period', type=int, default=60,
                         help='Polling period for live GTFS feed')
     parser.add_argument('-w', '--max_wait', type=int, default=60,
@@ -89,6 +92,7 @@ if __name__ == "__main__":
 
 
     args = parser.parse_args()
+    logging.basicConfig(level=getattr(logging, args.log_level))
 
     # set up the GTFS object
     gtfs = GTFS(

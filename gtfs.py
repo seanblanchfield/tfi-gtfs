@@ -19,36 +19,44 @@ def _b2s(b):
 
 class GTFS:
     def __init__(self, live_url:str, api_key: str, redis_url:str=None, no_cache:bool = False, polling_period:int=60, profile_memory:bool=False):
-        self.store = memstore.MemStore(redis_url=redis_url, no_cache=no_cache, keys_config={
+        self.store = memstore.MemStore(redis_url=redis_url, no_cache=no_cache, namespace_config={
             'route': {
-                'memoize': True,
+                'cache': True,
                 'expiry': 60 * 60 # 1 hour
             },
             'service': {
-                'memoize': True,
+                'cache': True,
                 'expiry': 60 * 60 # 1 hour
             },
             'stop': {
-                'memoize': True,
+                'cache': True,
                 'expiry': 60 * 60 # 1 hour
             },
             'stop_numbers': {
-                'memoize': True,
+                'cache': True,
                 'expiry': 60 * 60 # 1 hour
             },
             # service, stops, stop_numbers, trips
         })
-        if self.store.get("initialized") is None:
+        if self.store.get('status', "initialized") is None:
             logging.info("Loading GTFS static data from scratch.")
+            logging.info("Loading routes.")
             self._read_routes()
+            logging.info("Loading agencies.")
             self._read_agencies()
+            logging.info("Loading calendar.")
             self._read_calendar()
+            logging.info("Loading calendar exceptions.")
             self._read_exceptions()
+            logging.info("Loading stops.")
             self._read_stops()
+            logging.info("Loading trips.")
             self._read_trips()
+            logging.info("Loading stop times.")
             self._read_stop_times()
-            self.store.set("initialized", True)
-            self.store.store_cache()
+            self.store.set('status', "initialized", True)
+            logging.info("Persisting data to disk.")
+            self.store.persist_data()
         else:
             logging.info("Loading GTFS static data from cache.")
 
@@ -57,6 +65,7 @@ class GTFS:
         self.polling_period = polling_period
         self.last_poll = 0
         self.poll_backoff = 0
+        logging.info("Updating from live feed.")
         self._refresh_live_data()
         
         if profile_memory:
@@ -70,7 +79,7 @@ class GTFS:
             next(reader)
             for row in reader:
                 agency_id, agency_name = row[0:2]
-                self.store.set(f"agency:{agency_id}", agency_name)
+                self.store.set('agency', agency_id, agency_name)
 
     def _read_routes(self):
         with(open("data/routes.txt", "r")) as f:
@@ -79,7 +88,7 @@ class GTFS:
             next(reader)
             for row in reader:
                 route_id, agency, short_name = row[0:3]
-                self.store.set(f"route:{route_id}", {
+                self.store.set('route', route_id, {
                     'name': short_name,
                     'agency': agency
                 })
@@ -98,7 +107,7 @@ class GTFS:
                 end_date = datetime.datetime.strptime(row[9], '%Y%m%d').date()
                 # days represented by '0' or '1'. Convert to bools.
                 days = [bool(int(day)) for day in row[1:8]]
-                self.store.set(f"service:{service_id}", {
+                self.store.set('service', service_id, {
                     'start_date': start_date,
                     'end_date': end_date,
                     'days': days
@@ -118,7 +127,7 @@ class GTFS:
                 service_id = row[0]
                 date = datetime.datetime.strptime(row[1], '%Y%m%d').date()
                 exception_type = int(row[2])
-                self.store.set(f"exception:{service_id}:{date}", exception_type)
+                self.store.set('exception', f"{service_id}:{date}", exception_type)
 
     def _read_stops(self):
         # open stops.txt and parse it as a CSV file, then return a dict
@@ -131,8 +140,8 @@ class GTFS:
                 stop_id = row[0]
                 stop_number = row[1]
                 # some stops (in Northern Ireland) don't have a stop code. Use the stop_id instead.
-                self.store.set(f"stop:{stop_id}", stop_number or stop_id)
-                self.store.add(f"stop_numbers", stop_number or stop_id)
+                self.store.set('stop', stop_id, stop_number or stop_id)
+                self.store.add('stop_numbers', stop_number or stop_id)
     
     def _pack_trip(self, route_id, service_id):
         # bit pack the data to save space (it's easy to consume gigabytes of memory)
@@ -154,16 +163,16 @@ class GTFS:
                 route_id = row[0]
                 service_id = row[1]
                 trip_id = row[2]
-                self.store.set(f"trip:{trip_id}", self._pack_trip(route_id, service_id))
+                self.store.set('trip', trip_id, self._pack_trip(route_id, service_id))
 
     def get_trip_info(self, trip_id):
         try:
-            packed_trip = self.store.get(f"trip:{trip_id}")
+            packed_trip = self.store.get('trip', trip_id)
             if packed_trip:
                 route_id, service_id = self._unpack_trip(packed_trip)
-                route_info = self.store.get(f"route:{route_id}")
-                agency_info = self.store.get(f"agency:{route_info['agency']}")
-                calendar_info = self.store.get(f"service:{service_id}")
+                route_info = self.store.get('route', route_id)
+                agency_info = self.store.get('agency', route_info['agency'])
+                calendar_info = self.store.get('service', service_id)
                 return {
                     'route': route_info['name'],
                     'agency': agency_info,
@@ -201,7 +210,7 @@ class GTFS:
                     sys.stdout.write('.')
                     sys.stdout.flush()
                 trip_id, arrival_time, _, stop_id, stop_sequence = row[0:5]
-                stop_number = self.store.get(f"stop:{stop_id}")
+                stop_number = self.store.get('stop', stop_id)
                 arrival_hour, arrival_min, arrival_sec = [int(x) for x in arrival_time.split(':')]
                 # arrival time is in the format HH:MM:SS. Pull out the hour so that trips can be 
                 # looked up by stop and hour.
@@ -213,7 +222,7 @@ class GTFS:
         logging.info(f"\nLoaded {idx + 1} stop times in {time.time() - start_time:.0f} seconds")
         for stop_number in stop_times:
             for hour in stop_times[stop_number]:
-                self.store.set(f"stop_times:{stop_number}:{hour}", stop_times[stop_number][hour])
+                self.store.set('stop_times', f"{stop_number}:{hour}", stop_times[stop_number][hour])
 
     def _parse_live_data(self, buf: bytes):
         # https://developers.google.com/transit/gtfs-realtime/reference#enum-schedulerelationship-2
@@ -240,7 +249,7 @@ class GTFS:
                     if stop_time_update.schedule_relationship != STOP_SCHEDULED:
                         continue
                     
-                    stop_number = self.store.get(f"stop:{stop_time_update.stop_id}")
+                    stop_number = self.store.get('stop', stop_time_update.stop_id)
                     if stop_number is None:
                         logging.warning(f"Unrecognised stop_id {stop_time_update.stop_id} in live data feed.")
                         continue
@@ -248,14 +257,14 @@ class GTFS:
                         # We can only work with an unscheduled "added" trip if we are given the expected arrival time.
                         if stop_time_update.arrival.time:
                             num_added += 1
-                            self.store.set(f"live_additions:{stop_number}", {
+                            self.store.set('live_additions', stop_number, {
                                 'route_id': entity.trip_update.trip.route_id,
                                 'arrival': datetime.datetime.fromtimestamp(stop_time_update.arrival.time),
                                 'timestamp': timestamp
                             })
                     elif entity.trip_update.trip.schedule_relationship == TRIP_CANCELLED:
                         num_cancelled += 1
-                        self.store.set(f"live_cancelations:{trip_id}", True)
+                        self.store.set('live_cancelations', trip_id, True)
                         self._live_data['cancelled'][trip_id] = {
                             'timestamp': timestamp
                         }
@@ -283,7 +292,7 @@ class GTFS:
                             'arrival_time': arrival_time,
                             'timestamp': timestamp
                         })
-                self.store.set(f"live_delays:{trip_id}", trip_delays)
+                self.store.set('live_delays', trip_id, trip_delays)
         logging.info(f"Got {num_updates} trip updates, {num_unrecognised_trips} unrecognised trips, {num_added} added trips, {num_cancelled} cancelled trips")
     
     def _refresh_live_data(self):
@@ -311,7 +320,7 @@ class GTFS:
     def _get_live_delay(self, trip_id: str, stop_sequence: int):
         # find the real time update for this stop or the one with the highest sequence number
         # lower than this stop
-        updates = self.store.get(f"live_delays:{trip_id}")
+        updates = self.store.get('live_delays', trip_id)
         if updates:
             # updates is a sorted list of dicts, each of which contain a stop_sequence and delay
             # binary search through the list to find the item with the closest stop_sequence that is 
@@ -335,7 +344,7 @@ class GTFS:
                 return updates[left - 1]['delay']
 
     def is_valid_stop_number(self, stop_number: str):
-        return self.store.has("stop_numbers", stop_number)
+        return self.store.has('stop_numbers', stop_number)
     
     def get_scheduled_arrivals(self, stop_number: str, now: datetime, max_wait: datetime.timedelta):
         self._refresh_live_data()
@@ -350,7 +359,7 @@ class GTFS:
             try_hours = [now.hour - 1]
         try_hours.extend([h % 24 for h in range(now.hour, now.hour + int(max_wait.total_seconds() // 3600) + 1)])
         for hour in try_hours:
-            for packed_stop_data in self.store.get(f"stop_times:{stop_number}:{hour}"):
+            for packed_stop_data in self.store.get('stop_times', f"{stop_number}:{hour}"):
                 trip_id, arrival_hour, arrival_min, arrival_sec, stop_sequence = self._unpack_stop_data(packed_stop_data)
                 time_since_midnight = datetime.timedelta(hours=now.hour, minutes=now.minute, seconds=now.second)
                 
@@ -369,7 +378,7 @@ class GTFS:
                 service_is_scheduled = \
                     trip_info['start_date'] <= arrival_datetime.date() <= trip_info['end_date'] and \
                     trip_info['days'][arrival_datetime.date().weekday()]
-                calendar_exception = self.store.get(f"exception:{trip_info['service_id']}:{arrival_datetime.date()}")
+                calendar_exception = self.store.get('exception', f"{trip_info['service_id']}:{arrival_datetime.date()}")
                 # check if there is a calendar exception
                 added = calendar_exception == 1
                 removed = calendar_exception == 2
@@ -390,9 +399,9 @@ class GTFS:
                         scheduled_arrivals.append(arrival)
         
         # add any added trips
-        for added_trip in self.store.get(f"live_additions:{stop_number}", []):
-            route_info = self.store.get(f"route:{added_trip['route_id']}")
-            agency_info = self.store.get(f"agency:{route_info['agency']}")
+        for added_trip in self.store.get('live_additions', stop_number, []):
+            route_info = self.store.get('route', added_trip['route_id'])
+            agency_info = self.store.get('agency', route_info['agency'])
             scheduled_arrivals.append({
                 'route': route_info['name'],
                 'agency': agency_info['name'],
