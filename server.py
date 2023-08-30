@@ -76,11 +76,16 @@ def start_scheduled_jobs(gtfs, polling_period, download_schedule):
 
     # start a thread that refreshes live data every polling_period seconds
     def refresh():
+        last_poll = 0
+        poll_backoff = 0
+        rate_limit_count = 0
         next_download = datetime.datetime.utcnow() + datetime.timedelta(seconds=cron.next(default_utc=True))
         while True:
-            time.sleep(polling_period)
+            # exponential backoff if the last poll was rate limited
+            time.sleep(int(polling_period + polling_period * 1.5**poll_backoff))
+            now = time.time()
             logging.info("Updating from live feed.")
-            gtfs.refresh_live_data()
+            rate_limit_count = gtfs.refresh_live_data()
             logging.info("Live feed updated.")
 
             # Check if the static GTFS data should be downloaded
@@ -101,6 +106,8 @@ if __name__ == "__main__":
                         help=f"Host to listen on (default: {settings.HOST})")
     parser.add_argument('-P', '--port', type=int, default=settings.PORT,
                         help=f"Port to listen on (default: {settings.PORT})")
+    parser.add_argument('-p', '--polling_period', type=int, default=settings.POLLING_PERIOD,
+                        help=f"Polling period for live GTFS feed (default: {settings.POLLING_PERIOD})")
     parser.add_argument('-d', '--download', type=str, default=settings.DOWNLOAD_SCHEDULE,
                         help=f"Cron-style schedule for downloading the GTFS static data (default: {settings.DOWNLOAD_SCHEDULE})")
     args = parser.parse_args()
@@ -112,7 +119,7 @@ if __name__ == "__main__":
         api_key=args.api_key, 
         redis_url=args.redis,
         no_cache=args.no_cache,
-        polling_period=args.polling_period
+        filter_stops=args.filter.split(',')
     )
     start_scheduled_jobs(gtfs, args.polling_period, args.download)
 

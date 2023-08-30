@@ -5,15 +5,15 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "Python: Current File",
+            "name": "Python: server",
             "type": "python",
             "request": "launch",
-            "program": "${file}",
+            "program": "server.py",
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
-                "--redis",
-                "redis://localhost:6379",
+                "--filter",
+                "2189",
                 "--no_cache"
             ]
         }

@@ -17,6 +17,9 @@ DOWNLOAD_SCHEDULE = os.environ.get('DOWNLOAD_SCHEDULE', '0 7 * * SUN')
 # set default logging level to INFO
 LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO')
 
+# Optimize memory usage by only storing data related to a given list of stops
+FILTER_STOPS = os.environ.get('FILTER_STOPS', None)
+
 # Optionally create a `local_settings.py` file to override these settings
 # during development. This file will be ignored by git. 
 try:
