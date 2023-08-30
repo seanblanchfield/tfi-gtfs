@@ -19,8 +19,9 @@ from flask.json.provider import DefaultJSONProvider
 import yaml
 import waitress
 from functools import wraps
+from crontab import CronTab
 
-from gtfs import GTFS, make_base_arg_parser
+from gtfs import GTFS, make_base_arg_parser, download_static_data
 import settings
 
 
@@ -70,14 +71,24 @@ def format_response(func):
     return decorated_function
 
 
-def start_scheduled_jobs(gtfs, polling_period):
+def start_scheduled_jobs(gtfs, polling_period, download_schedule):
+    cron = CronTab(download_schedule)
+
     # start a thread that refreshes live data every polling_period seconds
     def refresh():
+        next_download = datetime.datetime.utcnow() + datetime.timedelta(seconds=cron.next(default_utc=True))
         while True:
             time.sleep(polling_period)
             logging.info("Updating from live feed.")
             gtfs.refresh_live_data()
             logging.info("Live feed updated.")
+
+            # Check if the static GTFS data should be downloaded
+            now = datetime.datetime.utcnow()
+            if now > next_download:
+                download_static_data()
+                gtfs.load_static()
+                next_download = now + datetime.timedelta(seconds=cron.next(default_utc=True))
     t = threading.Thread(target=refresh)
     t.daemon = True
     t.start()
@@ -87,9 +98,11 @@ if __name__ == "__main__":
     # Parse command line arguments
     parser = make_base_arg_parser("Run a REST server that allows the API to be queried for upcoming scheduled arrivals.")
     parser.add_argument('-H', '--host', type=str, default=settings.HOST,
-                        help='Host to listen on')
+                        help=f"Host to listen on (default: {settings.HOST})")
     parser.add_argument('-P', '--port', type=int, default=settings.PORT,
-                        help='Port to listen on')
+                        help=f"Port to listen on (default: {settings.PORT})")
+    parser.add_argument('-d', '--download', type=str, default=settings.DOWNLOAD_SCHEDULE,
+                        help=f"Cron-style schedule for downloading the GTFS static data (default: {settings.DOWNLOAD_SCHEDULE})")
     args = parser.parse_args()
     logging.basicConfig(level=getattr(logging, args.log_level))
 
@@ -101,7 +114,7 @@ if __name__ == "__main__":
         no_cache=args.no_cache,
         polling_period=args.polling_period
     )
-    start_scheduled_jobs(gtfs, args.polling_period)
+    start_scheduled_jobs(gtfs, args.polling_period, args.download)
 
     # set up the API endpoint
     @app.route('/api/v1/arrivals')

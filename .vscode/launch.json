@@ -13,7 +13,8 @@
             "justMyCode": true,
             "args": [
                 "--redis",
-                "redis://localhost:6379"
+                "redis://localhost:6379",
+                "--no_cache"
             ]
         }
     ]

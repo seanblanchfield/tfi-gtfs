@@ -40,25 +40,8 @@ class GTFS:
             },
             # service, stops, stop_numbers, trips
         })
-        if self.store.get('status', "initialized") is None:
-            logging.info("Loading GTFS static data from scratch.")
-            logging.info("Loading routes.")
-            self._read_routes()
-            logging.info("Loading agencies.")
-            self._read_agencies()
-            logging.info("Loading calendar.")
-            self._read_calendar()
-            logging.info("Loading calendar exceptions.")
-            self._read_exceptions()
-            logging.info("Loading stops.")
-            self._read_stops()
-            logging.info("Loading trips.")
-            self._read_trips()
-            logging.info("Loading stop times.")
-            self._read_stop_times()
-            self.store.set('status', "initialized", True)
-            logging.info("Persisting data to disk.")
-            self.store.persist_data()
+        if self.store.get('status', "initialized") is None or no_cache:
+            self.load_static()
         else:
             logging.info("Loading GTFS static data from cache.")
 
@@ -73,6 +56,26 @@ class GTFS:
         if profile_memory:
             logging.info("Profiling memory usage...")
             logging.info(f"Total memory size is {self.store.profile_memory() / 1024 / 1024:.0f} MB")
+    
+    def load_static(self):
+        logging.info("Loading GTFS static data from scratch.")
+        logging.info("Loading routes.")
+        self._read_routes()
+        logging.info("Loading agencies.")
+        self._read_agencies()
+        logging.info("Loading calendar.")
+        self._read_calendar()
+        logging.info("Loading calendar exceptions.")
+        self._read_exceptions()
+        logging.info("Loading stops.")
+        self._read_stops()
+        logging.info("Loading trips.")
+        self._read_trips()
+        logging.info("Loading stop times.")
+        self._read_stop_times()
+        self.store.set('status', "initialized", True)
+        logging.info("Persisting data.")
+        self.store.persist_data()
     
     def _read_agencies(self):
         with(open("data/agency.txt", "r")) as f:
@@ -173,6 +176,9 @@ class GTFS:
             if packed_trip:
                 route_id, service_id = self._unpack_trip(packed_trip)
                 route_info = self.store.get('route', route_id)
+                if route_info is None:
+                    logging.warn(f"Unrecognised route_id {route_id} in trip {trip_id}")
+                    return
                 agency_info = self.store.get('agency', route_info['agency'])
                 calendar_info = self.store.get('service', service_id)
                 return {
@@ -375,7 +381,8 @@ class GTFS:
                 # Check if service is calendared to run
                 arrival_datetime = datetime.datetime(now.year, now.month, now.day) + arrival_time
                 trip_info = self.get_trip_info(trip_id)
-                
+                if trip_info is None:
+                    continue
                 service_is_scheduled = \
                     trip_info['start_date'] <= arrival_datetime.date() <= trip_info['end_date'] and \
                     trip_info['days'][arrival_datetime.date().weekday()]
@@ -413,7 +420,7 @@ class GTFS:
         return scheduled_arrivals
 
 
-def downloadStaticGTFS():
+def download_static_data():
     # download the GTFS zip file and extract it into the data directory
     import urllib.request
     import zipfile
@@ -442,25 +449,20 @@ def make_base_arg_parser(description):
     
     parser = argparse.ArgumentParser(description=description)
     parser.add_argument('-l', '--live_url', type=str, default=settings.GTFS_LIVE_URL,
-                        help='URL of the live GTFS feed')
+                        help=f"URL of the live GTFS feed (default: {settings.GTFS_LIVE_URL})")
     parser.add_argument('-k', '--api_key', type=str, default=settings.API_KEY,
-                        help='API key for the live GTFS feed')
+                        help=f"Your API key for the live GTFS feed")
     parser.add_argument('-r', '--redis', type=str, default=settings.REDIS_URL,
-                        help='URL of a redis instance to use as a data store backend')
+                        help=f"URL of a redis instance to use as a data store backend (default: {settings.REDIS_URL})")
     parser.add_argument('--no_cache', action='store_true',default=False,
-                        help='Ignore cached GTFS data and load static data from scratch')
-    parser.add_argument('--profile', action='store_true',default=False,
-                        help='Profile memory usage')
+                        help="Ignore cached GTFS data and load static data from scratch")
     parser.add_argument('-p', '--polling_period', type=int, default=settings.POLLING_PERIOD,
-                        help='Polling period for live GTFS feed')
+                        help=f"Polling period for live GTFS feed (default: {settings.POLLING_PERIOD})")
     parser.add_argument('--logging', type=str, choices=['DEBUG', 'INFO', 'WARN', 'ERROR'], default=settings.LOG_LEVEL, dest='log_level',
-                        help='Print verbose output')
+                        help=f"Print verbose output (default: {settings.LOG_LEVEL}))")
     parser.add_argument('-w', '--max_wait', type=int, default=settings.MAX_WAIT,
-                        help='Maximum minutes in the future to return results for')
-    parser.add_argument('--download', action='store_true', default=False,
-                        help='Download and extract the static GTFS archive and exit')
-    parser.add_argument('stop_numbers', metavar='stop numbers', type=str, nargs='*',
-                        help='Stop numbers to query (as shown on the bus stop)')
+                        help=f"Maximum minutes in the future to return results for (default: {settings.MAX_WAIT})")
+    
     return parser
 
 
@@ -479,7 +481,7 @@ if __name__ == "__main__":
 
     # if the --download option was specified, download the static GTFS archive and exit
     if args.download:
-        downloadStaticGTFS()
+        download_static_data()
         sys.exit(0)
     
     # additional unnamed arguments specify a list of stop codes to query
