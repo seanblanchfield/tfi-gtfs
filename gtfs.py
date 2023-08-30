@@ -512,12 +512,14 @@ if __name__ == "__main__":
         print("No stop numbers specified.")
         sys.exit(1)
 
+    if args.filter is not None:
+        args.filter = args.filter.split(',')
     gtfs = GTFS(
         live_url=args.live_url, 
         api_key=args.api_key, 
         redis_url=args.redis,
         no_cache=args.no_cache,
-        filter_stops=args.filter.split(','),
+        filter_stops=args.filter,
         profile_memory=args.profile
     )
         

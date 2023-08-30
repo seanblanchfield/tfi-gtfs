@@ -114,12 +114,14 @@ if __name__ == "__main__":
     logging.basicConfig(level=getattr(logging, args.log_level))
 
     # set up the GTFS object
+    if args.filter is not None:
+        args.filter = args.filter.split(',')
     gtfs = GTFS(
         live_url=args.live_url, 
         api_key=args.api_key, 
         redis_url=args.redis,
         no_cache=args.no_cache,
-        filter_stops=args.filter.split(',')
+        filter_stops=args.filter
     )
     start_scheduled_jobs(gtfs, args.polling_period, args.download)
 
