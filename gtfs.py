@@ -68,8 +68,8 @@ class GTFS:
         self.last_poll = 0
         self.poll_backoff = 0
         logging.info("Updating from live feed.")
-        self._refresh_live_data()
-        
+        self.refresh_live_data()
+        logging.info("Live feed loaded.")
         if profile_memory:
             logging.info("Profiling memory usage...")
             logging.info(f"Total memory size is {self.store.profile_memory() / 1024 / 1024:.0f} MB")
@@ -297,7 +297,7 @@ class GTFS:
                 self.store.set('live_delays', trip_id, trip_delays)
         logging.info(f"Got {num_updates} trip updates, {num_unrecognised_trips} unrecognised trips, {num_added} added trips, {num_cancelled} cancelled trips")
     
-    def _refresh_live_data(self):
+    def refresh_live_data(self):
         now = time.time()
         if now - self.last_poll > self.polling_period + self.poll_backoff:
             try:
@@ -349,7 +349,6 @@ class GTFS:
         return self.store.has('stop_numbers', stop_number)
     
     def get_scheduled_arrivals(self, stop_number: str, now: datetime, max_wait: datetime.timedelta):
-        self._refresh_live_data()
         # get all the scheduled arrivals at a given stop_id
         # returns a list of (trip_id, arrival_time, stop_sequence)
         scheduled_arrivals = []
@@ -452,11 +451,11 @@ def make_base_arg_parser(description):
                         help='Ignore cached GTFS data and load static data from scratch')
     parser.add_argument('--profile', action='store_true',default=False,
                         help='Profile memory usage')
-    parser.add_argument('-p', '--polling_period', type=int, default=60,
+    parser.add_argument('-p', '--polling_period', type=int, default=settings.POLLING_PERIOD,
                         help='Polling period for live GTFS feed')
     parser.add_argument('--logging', type=str, choices=['DEBUG', 'INFO', 'WARN', 'ERROR'], default=settings.LOG_LEVEL, dest='log_level',
                         help='Print verbose output')
-    parser.add_argument('-w', '--max_wait', type=int, default=60,
+    parser.add_argument('-w', '--max_wait', type=int, default=settings.MAX_WAIT,
                         help='Maximum minutes in the future to return results for')
     parser.add_argument('--download', action='store_true', default=False,
                         help='Download and extract the static GTFS archive and exit')
@@ -488,7 +487,7 @@ if __name__ == "__main__":
         # print an error message and exit if no stop codes were specified
         print("No stop numbers specified.")
         sys.exit(1)
-    
+
     gtfs = GTFS(
         live_url=args.live_url, 
         api_key=args.api_key, 

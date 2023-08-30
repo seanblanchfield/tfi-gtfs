@@ -10,6 +10,8 @@
 
 import datetime
 import logging
+import threading
+import time
 
 from flask import Flask, jsonify, request, Response
 from flask_cors import CORS
@@ -18,8 +20,9 @@ import yaml
 import waitress
 from functools import wraps
 
+from gtfs import GTFS, make_base_arg_parser
 import settings
-import gtfs
+
 
 app = Flask(__name__)
 CORS(app)
@@ -66,24 +69,39 @@ def format_response(func):
     
     return decorated_function
 
+
+def start_scheduled_jobs(gtfs, polling_period):
+    # start a thread that refreshes live data every polling_period seconds
+    def refresh():
+        while True:
+            time.sleep(polling_period)
+            logging.info("Updating from live feed.")
+            gtfs.refresh_live_data()
+            logging.info("Live feed updated.")
+    t = threading.Thread(target=refresh)
+    t.daemon = True
+    t.start()
+
+
 if __name__ == "__main__":
     # Parse command line arguments
-    parser = gtfs.make_base_arg_parser("Run a REST server that allows the API to be queried for upcoming scheduled arrivals.")
-    parser.add_argument('-H', '--host', type=str, default='localhost',
+    parser = make_base_arg_parser("Run a REST server that allows the API to be queried for upcoming scheduled arrivals.")
+    parser.add_argument('-H', '--host', type=str, default=settings.HOST,
                         help='Host to listen on')
-    parser.add_argument('-P', '--port', type=int, default=5000,
+    parser.add_argument('-P', '--port', type=int, default=settings.PORT,
                         help='Port to listen on')
     args = parser.parse_args()
     logging.basicConfig(level=getattr(logging, args.log_level))
-    
+
     # set up the GTFS object
-    gtfs = gtfs.GTFS(
+    gtfs = GTFS(
         live_url=args.live_url, 
         api_key=args.api_key, 
         redis_url=args.redis,
         no_cache=args.no_cache,
         polling_period=args.polling_period
     )
+    start_scheduled_jobs(gtfs, args.polling_period)
 
     # set up the API endpoint
     @app.route('/api/v1/arrivals')
