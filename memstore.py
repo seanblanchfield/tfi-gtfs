@@ -21,6 +21,7 @@ class MemStore:
         self.namespace_config = namespace_config
         self.data = collections.defaultdict(dict)
         if redis_url:
+            logging.info("Using redis for data storage at %s", redis_url)
             self.redis = redis.from_url(redis_url)
         else:
             self.redis = None

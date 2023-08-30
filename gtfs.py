@@ -40,7 +40,9 @@ class GTFS:
             },
             # service, stops, stop_numbers, trips
         })
-
+        # Download static data if it doesn't exist
+        if not static_data_exists():
+            download_static_data()
         self.live_url = live_url
         self.api_key = api_key
         self.filter_stops = set(filter_stops) if filter_stops is not None else None
@@ -50,8 +52,12 @@ class GTFS:
         self.rate_limit_count = 0
         if self.store.get('status', "initialized") is None or no_cache:
             self.load_static()
+            # Reset filter_trips and stop_trips to allow garbage collection
+            self.filter_trips = None
+            self.stop_trips = None
         else:
             logging.info("Loading GTFS static data from cache.")
+        
         logging.info("Updating from live feed.")
         self.refresh_live_data()
         logging.info("Live feed loaded.")
@@ -190,7 +196,7 @@ class GTFS:
                      stop_times[stop_number][hour] = []
                 stop_times[stop_number][hour].append(self._pack_stop_data(trip_id, arrival_hour, arrival_min, arrival_sec, stop_sequence))
 
-        logging.info(f"\nLoaded {idx + 1} stop times in {time.time() - start_time:.0f} seconds")
+        logging.info(f"\n\nLoaded {idx + 1} stop times in {time.time() - start_time:.0f} seconds")
         for stop_number in stop_times:
             for hour in stop_times[stop_number]:
                 self.store.set('stop_times', f"{stop_number}:{hour}", stop_times[stop_number][hour])
@@ -443,6 +449,9 @@ class GTFS:
         return scheduled_arrivals
 
 
+def static_data_exists():
+    return os.path.exists("data/routes.txt")
+
 def download_static_data():
     # download the GTFS zip file and extract it into the data directory
     import urllib.request
@@ -463,8 +472,8 @@ def download_static_data():
             # extract the new .txt files into "data"
             zip_ref.extractall("data")
             # remove the cache file
-            if os.path.exists("data/cache.pickle"):
-                os.remove("data/cache.pickle")
+            if os.path.exists("data/data.pickle"):
+                os.remove("data/data.pickle")
     logging.info("Done.")
 
 

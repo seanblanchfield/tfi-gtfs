@@ -27,13 +27,13 @@ python3 server.py --help
 
 Query the server for arrivals at a specific set of stops:
 ``` bash
-curl -i "http://localhost:5000/api/v1/arrivals?stop=2189&stop=1509"
+curl -i "http://localhost:7341/api/v1/arrivals?stop=2189&stop=1509"
 
 # In yaml
-curl -i "http://localhost:5000/api/v1/arrivals?stop=2189&stop=1509" -H "Accept: application/yaml"
+curl -i "http://localhost:7341/api/v1/arrivals?stop=2189&stop=1509" -H "Accept: application/yaml"
 
 # As CSV
-curl -i "http://localhost:5000/api/v1/arrivals?stop=2189&stop=1509" -H "Accept: text/csv"
+curl -i "http://localhost:7341/api/v1/arrivals?stop=2189&stop=1509" -H "Accept: text/csv"
 
 ```
 
@@ -60,3 +60,19 @@ Running with all stops loaded:
 - GTFS-Upcoming used approximately 10Gb of RAM
 - TFI-GTFS without redis: ~450Mb
 - GTFS with redis: 170Mb
+
+# Docker
+```
+docker build -t tfi-gtfs .
+
+```
+
+``` bash
+# On the host, run the following command. This will be carried over from the host to the container,
+# and will be required by redis. See https://github.com/docker-library/redis/issues/19
+sudo sysctl vm.overcommit_memory=1 
+# with parameters
+docker run -p 7341:7341 tfi-gtfs --help
+# or with a settings file
+docker run -v ./settings.py:/app/settings.py:ro -p 7341:7341 tfi-gtfs --logging INFO
+```
