@@ -19,7 +19,7 @@ import waitress
 from functools import wraps
 
 import settings
-from gtfs import GTFS
+import gtfs
 
 app = Flask(__name__)
 CORS(app)
@@ -67,35 +67,17 @@ def format_response(func):
     return decorated_function
 
 if __name__ == "__main__":
-
-    # Read program options for live_url, api_key, no_cache, polling_period and the max_wait time
-    import argparse
-    parser = argparse.ArgumentParser(description='Run a REST server that allows the API to be queried for upcoming scheduled arrivals.')
-    parser.add_argument('-l', '--live_url', type=str, default=settings.GTFS_LIVE_URL,
-                        help='URL of the live GTFS feed')
-    parser.add_argument('-k', '--api_key', type=str, default=settings.API_KEY,
-                        help='API key for the live GTFS feed')
-    parser.add_argument('-r', '--redis', type=str, default=settings.REDIS_URL,
-                        help='URL of a redis instance to use as a data store backend')
-    parser.add_argument('--no_cache', action='store_true',default=False,
-                        help='Ignore cached GTFS data and load static data from scratch')
-    parser.add_argument('--logging', type=str, choices=['DEBUG', 'INFO', 'WARN', 'ERROR'], default=settings.LOG_LEVEL, dest='log_level',
-                        help='Print verbose output')
-    parser.add_argument('-p', '--polling_period', type=int, default=60,
-                        help='Polling period for live GTFS feed')
-    parser.add_argument('-w', '--max_wait', type=int, default=60,
-                        help='Maximum minutes in the future to return results for')
+    # Parse command line arguments
+    parser = gtfs.make_base_arg_parser("Run a REST server that allows the API to be queried for upcoming scheduled arrivals.")
     parser.add_argument('-H', '--host', type=str, default='localhost',
                         help='Host to listen on')
     parser.add_argument('-P', '--port', type=int, default=5000,
                         help='Port to listen on')
-
-
     args = parser.parse_args()
     logging.basicConfig(level=getattr(logging, args.log_level))
-
+    
     # set up the GTFS object
-    gtfs = GTFS(
+    gtfs = gtfs.GTFS(
         live_url=args.live_url, 
         api_key=args.api_key, 
         redis_url=args.redis,

@@ -7,6 +7,8 @@ import sys
 import struct
 import urllib.request
 import logging
+import argparse
+
 from google.transit import gtfs_realtime_pb2
 
 import memstore
@@ -436,12 +438,10 @@ def downloadStaticGTFS():
                 os.remove("data/cache.pickle")
     logging.info("Done.")
 
-import settings
-if __name__ == "__main__":
 
-    # Read program options for live_url, api_key, no_cache, polling_period and the max_wait time
-    import argparse
-    parser = argparse.ArgumentParser(description='Perform a live query against the API for upcoming scheduled arrivals.')
+def make_base_arg_parser(description):
+    
+    parser = argparse.ArgumentParser(description=description)
     parser.add_argument('-l', '--live_url', type=str, default=settings.GTFS_LIVE_URL,
                         help='URL of the live GTFS feed')
     parser.add_argument('-k', '--api_key', type=str, default=settings.API_KEY,
@@ -462,21 +462,33 @@ if __name__ == "__main__":
                         help='Download and extract the static GTFS archive and exit')
     parser.add_argument('stop_numbers', metavar='stop numbers', type=str, nargs='*',
                         help='Stop numbers to query (as shown on the bus stop)')
-    
+    return parser
+
+
+import settings
+if __name__ == "__main__":
+    # Parse command line arguments
+    parser = make_base_arg_parser("Perform a live query against the API for upcoming scheduled arrivals.")
+    parser.add_argument('--profile', action='store_true',default=False,
+                        help='Profile memory usage')
+    parser.add_argument('--download', action='store_true', default=False,
+                        help='Download and extract the static GTFS archive and exit')
+    parser.add_argument('stop_numbers', metavar='stop numbers', type=str, nargs='*',
+                        help='Stop numbers to query (as shown on the bus stop)')
     args = parser.parse_args()
+    logging.basicConfig(level=getattr(logging, args.log_level))
+
     # if the --download option was specified, download the static GTFS archive and exit
     if args.download:
         downloadStaticGTFS()
         sys.exit(0)
+    
     # additional unnamed arguments specify a list of stop codes to query
     if not args.stop_numbers:
         # print an error message and exit if no stop codes were specified
         print("No stop numbers specified.")
         sys.exit(1)
-
     
-    logging.basicConfig(level=getattr(logging, args.log_level))
-
     gtfs = GTFS(
         live_url=args.live_url, 
         api_key=args.api_key, 
