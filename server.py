@@ -74,6 +74,8 @@ if __name__ == "__main__":
                         help='URL of the live GTFS feed')
     parser.add_argument('-k', '--api_key', type=str, default=settings.API_KEY,
                         help='API key for the live GTFS feed')
+    parser.add_argument('-r', '--redis', type=str, default=settings.REDIS_URL,
+                        help='URL of a redis instance to use as a data store backend')
     parser.add_argument('--no_cache', action='store_true',default=False,
                         help='Ignore cached GTFS data and load static data from scratch')
     parser.add_argument('-p', '--polling_period', type=int, default=60,
@@ -89,7 +91,13 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # set up the GTFS object
-    gtfs = GTFS(args.live_url, args.api_key, args.no_cache, args.polling_period)
+    gtfs = GTFS(
+        live_url=args.live_url, 
+        api_key=args.api_key, 
+        redis_url=args.redis,
+        no_cache=args.no_cache,
+        polling_period=args.polling_period
+    )
 
     # set up the API endpoint
     @app.route('/api/v1/arrivals')
@@ -99,7 +107,8 @@ if __name__ == "__main__":
         stop_numbers = request.args.getlist('stop')
         arrivals = {}
         for stop_number in stop_numbers:
-            arrivals[stop_number] = gtfs.get_scheduled_arrivals(stop_number, now, datetime.timedelta(minutes=args.max_wait))
+            if gtfs.is_valid_stop_number(stop_number):
+                arrivals[stop_number] = gtfs.get_scheduled_arrivals(stop_number, now, datetime.timedelta(minutes=args.max_wait))
         return arrivals
     
     # start server

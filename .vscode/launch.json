@@ -12,10 +12,8 @@
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
-                "--profile",
-                "--logging",
-                "WARN",
-                "2189"
+                "--redis",
+                "redis://localhost:6379"
             ]
         }
     ]

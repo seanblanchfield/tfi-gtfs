@@ -11,7 +11,7 @@ import size
 CACHE_PATH = "data/cache.pickle"
 
 class MemStore:
-    def __init__(self, redis_url:str=None, nocache:bool = False, keys_config:dict[dict[str]]={}):
+    def __init__(self, redis_url:str=None, no_cache:bool = False, keys_config:dict[dict[str]]={}):
         # Keys_config is a dictionary specifying treatment of different pieces of data.
         # Each key is the prefix ending before the first '%' in keys that it should be matched against.
         # Potential values are:
@@ -24,7 +24,7 @@ class MemStore:
             self.redis = redis.from_url(redis_url)
         else:
             self.redis = None
-            if os.path.exists(CACHE_PATH) and not nocache:
+            if os.path.exists(CACHE_PATH) and not no_cache:
                 with open(CACHE_PATH, "rb") as f:
                     logging.info("Loading GTFS static data from cache.")
                     self.data = pickle.load(f)
@@ -52,15 +52,21 @@ class MemStore:
             
             if config.get('memoize') and key in self.cache:
                 cache_t, cache_value = self.cache[key]
-                if t - cache_t < config.get('expiry', 0):
+                expiry = config.get('expiry')
+                if expiry is None or t - cache_t < expiry:
                     return cache_value
                 else:
                     del self.cache[key]
-            value = pickle.loads(self.redis.get(key, default))
+            value = self.redis.get(key)
+            if value is not None:
+                value = pickle.loads(value)
+            else:
+                value = default
             
             if config.get('memoize'):
                 t = int(time.time())
                 self.cache[key] = (t, value)
+            return value
         else:
             value = self.data.get(key)
             if value is None:

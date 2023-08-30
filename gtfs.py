@@ -18,10 +18,25 @@ def _b2s(b):
     return b.decode('utf-8').split(chr(0))[0]
 
 class GTFS:
-    def __init__(self, live_url:str, api_key: str, no_cache:bool = False, polling_period:int=60, profile_memory:bool=False):
-        self.store = memstore.MemStore(keys_config={
-            'trip': {'struct_fmt': '12s4s'},
-            'stop_times': {'struct_fmt': '12s4b'},
+    def __init__(self, live_url:str, api_key: str, redis_url:str=None, no_cache:bool = False, polling_period:int=60, profile_memory:bool=False):
+        self.store = memstore.MemStore(redis_url=redis_url, no_cache=no_cache, keys_config={
+            'route': {
+                'memoize': True,
+                'expiry': 60 * 60 # 1 hour
+            },
+            'service': {
+                'memoize': True,
+                'expiry': 60 * 60 # 1 hour
+            },
+            'stop': {
+                'memoize': True,
+                'expiry': 60 * 60 # 1 hour
+            },
+            'stop_numbers': {
+                'memoize': True,
+                'expiry': 60 * 60 # 1 hour
+            },
+            # service, stops, stop_numbers, trips
         })
         if self.store.get("initialized") is None:
             logging.info("Loading GTFS static data from scratch.")
@@ -143,18 +158,20 @@ class GTFS:
 
     def get_trip_info(self, trip_id):
         try:
-            route_id, service_id = self._unpack_trip(self.store.get(f"trip:{trip_id}"))
-            route_info = self.store.get(f"route:{route_id}")
-            agency_info = self.store.get(f"agency:{route_info['agency']}")
-            calendar_info = self.store.get(f"service:{service_id}")
-            return {
-                'route': route_info['name'],
-                'agency': agency_info,
-                'service_id': service_id,
-                'start_date': calendar_info['start_date'],
-                'end_date': calendar_info['end_date'],
-                'days': calendar_info['days']
-            }
+            packed_trip = self.store.get(f"trip:{trip_id}")
+            if packed_trip:
+                route_id, service_id = self._unpack_trip(packed_trip)
+                route_info = self.store.get(f"route:{route_id}")
+                agency_info = self.store.get(f"agency:{route_info['agency']}")
+                calendar_info = self.store.get(f"service:{service_id}")
+                return {
+                    'route': route_info['name'],
+                    'agency': agency_info,
+                    'service_id': service_id,
+                    'start_date': calendar_info['start_date'],
+                    'end_date': calendar_info['end_date'],
+                    'days': calendar_info['days']
+                }
         except KeyError:
             return None
 
@@ -420,6 +437,8 @@ if __name__ == "__main__":
                         help='URL of the live GTFS feed')
     parser.add_argument('-k', '--api_key', type=str, default=settings.API_KEY,
                         help='API key for the live GTFS feed')
+    parser.add_argument('-r', '--redis', type=str, default=settings.REDIS_URL,
+                        help='URL of a redis instance to use as a data store backend')
     parser.add_argument('--no_cache', action='store_true',default=False,
                         help='Ignore cached GTFS data and load static data from scratch')
     parser.add_argument('--profile', action='store_true',default=False,
@@ -452,6 +471,7 @@ if __name__ == "__main__":
     gtfs = GTFS(
         live_url=args.live_url, 
         api_key=args.api_key, 
+        redis_url=args.redis,
         no_cache=args.no_cache,
         polling_period=args.polling_period,
         profile_memory=args.profile
