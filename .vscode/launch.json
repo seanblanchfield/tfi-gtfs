@@ -12,9 +12,14 @@
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
-                "--filter",
-                "2189",
-                "--no_cache"
+                // "--filter",
+                // "2189",
+                "--logging",
+                "INFO",
+                "--redis",
+                "redis://localhost:6379",
+                // "--no_cache",
+                "--profile"
             ]
         }
     ]

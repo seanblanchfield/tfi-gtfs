@@ -121,7 +121,8 @@ if __name__ == "__main__":
         api_key=args.api_key, 
         redis_url=args.redis,
         no_cache=args.no_cache,
-        filter_stops=args.filter
+        filter_stops=args.filter,
+        profile_memory=args.profile
     )
     start_scheduled_jobs(gtfs, args.polling_period, args.download)
 

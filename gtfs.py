@@ -63,7 +63,10 @@ class GTFS:
         logging.info("Live feed loaded.")
         if profile_memory:
             logging.info("Profiling memory usage...")
-            logging.info(f"Total memory size is {self.store.profile_memory() / 1024 / 1024:.0f} MB")
+            stats = self.store.profile_memory()
+            logging.info(f"Total used memory: {sum(stats.values()) / 1024 / 1024 :.02f} MB")
+            for key in stats:
+                logging.info(f"{ key }: { stats[key] / 1024 / 1024 :.02f} MB")
     
     def load_static(self):
         logging.info("Loading GTFS static data from scratch.")
@@ -494,6 +497,8 @@ def make_base_arg_parser(description):
                         help=f"Comma separated list of stop numbers that stored data must relate to, for memory optimization. If not specified, all stops are included. (default: {settings.FILTER_STOPS})")
     parser.add_argument('--logging', type=str, choices=['DEBUG', 'INFO', 'WARN', 'ERROR'], default=settings.LOG_LEVEL, dest='log_level',
                         help=f"Print verbose output (default: {settings.LOG_LEVEL}))")
+    parser.add_argument('--profile', action='store_true',default=False,
+                        help='Profile memory usage')
     return parser
 
 
@@ -501,8 +506,7 @@ import settings
 if __name__ == "__main__":
     # Parse command line arguments
     parser = make_base_arg_parser("Perform a live query against the API for upcoming scheduled arrivals.")
-    parser.add_argument('--profile', action='store_true',default=False,
-                        help='Profile memory usage')
+    
     parser.add_argument('--download', action='store_true', default=False,
                         help='Download and extract the static GTFS archive and exit')
     parser.add_argument('stop_numbers', metavar='stop numbers', type=str, nargs='*',

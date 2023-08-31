@@ -38,10 +38,15 @@ class MemStore:
                 pickle.dump(self.data, f)
     
     def profile_memory(self):
+        res = {}
         if self.redis:
-            return self.redis.info('memory')
-        else:
-            return size.total_size(self.data)
+            res['redis'] = self.redis.info('memory')['used_memory']
+        in_proc = {}
+        for key in self.data:
+            in_proc[f"In-process '{key}'"] = size.total_size(self.data[key])
+        res['in_process'] = sum(in_proc.values())
+        res.update(in_proc)
+        return res
 
     def get(self, namespace, key, default=None):
         config = self.namespace_config.get(namespace, {})
