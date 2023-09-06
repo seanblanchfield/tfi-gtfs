@@ -37,6 +37,11 @@ curl -i "http://localhost:7341/api/v1/arrivals?stop=2189&stop=1509" -H "Accept: 
 
 ```
 
+## Where to get a stop number?
+Stop numbers are printed on bus stops. You can also find relevant stops on the official (TFI route map)[https://www.transportforireland.ie/getting-around/by-bus/route-maps/]. Click on a stop to see its stop number.
+
+## Memory
+
 By default, the `gtfs` module will store data in local process memory, which is space inefficient (because they are python data structures), and which makes it risky to use multiple threads to access the data due to potential concurrency issues. The full dataset is large, and will
 consume hundreds of megabytes of RAM.
 
