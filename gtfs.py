@@ -467,7 +467,7 @@ def download_static_data():
             import shutil
             if os.path.exists("data/bak"):
                 shutil.rmtree("data/bak")
-            os.mkdir("data/bak")
+            os.makedirs("data/bak", exist_ok=True)
             # only copy .txt files
             for file in os.listdir("data"):
                 if file.endswith(".txt"):
