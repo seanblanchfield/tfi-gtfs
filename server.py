@@ -44,14 +44,19 @@ def format_response(func):
         response_data = func(*args, **kwargs)
         accept_header = request.headers.get('Accept')
         # default to JSON
+        mime_type = None
         if accept_header in ('*/*', '', 'application/*'):
-            accept_header = 'application/json'
+            mime_type = 'application/json'
+        else:
+            for mime_type in ('application/json', 'application/yaml', 'text/csv', 'text/plain', 'text/html', None):
+                if mime_type in accept_header:
+                    break
         
-        if 'application/json' in accept_header:
+        if mime_type == 'application/json':
             return jsonify(response_data)
-        elif 'application/yaml' in accept_header:
-            return Response(yaml.dump(response_data, default_flow_style=False), mimetype='application/yaml')
-        elif 'text/csv' in accept_header:
+        elif mime_type == 'application/yaml':
+            return Response(yaml.dump(response_data, default_flow_style=False), mimetype=mime_type)
+        elif mime_type in ('text/csv', 'text/plain', 'text/html'):
             # convert the nested response_data dict into a list of dicts
             # with the keys as the first row
             def to_iso_date(d):
@@ -65,8 +70,13 @@ def format_response(func):
                 for stop in stops
             ]
             # convert the list of dicts into a CSV string
-            csv = "\n".join([headers] + data)
-            return Response(csv, mimetype='text/csv')
+            if mime_type in ('text/csv', 'text/plain'):
+                csv = "\n".join([headers] + data)
+                return Response(csv, mimetype=mime_type)
+            elif mime_type=='text/html':
+                html = f"<html><body><table><tr><th>{headers.replace(',', '</th><th>')}</th></tr>"
+                html += "".join([f"<tr><td>{row.replace(',', '</td><td>')}</td></tr>" for row in data])
+                return Response(html, mimetype=mime_type)
     
     return decorated_function
 
