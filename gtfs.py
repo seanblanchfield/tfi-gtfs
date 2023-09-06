@@ -21,6 +21,15 @@ def _b2s(b):
 
 class GTFS:
     def __init__(self, live_url:str, api_key: str, redis_url:str=None, no_cache:bool = False, filter_stops:list=None, profile_memory:bool=False):
+        logging.info(f"""Initializing GTFS with:
+            live_url={live_url}
+            api_key={api_key}
+            redis_url={redis_url}
+            no_cache={no_cache}
+            filter_stops={filter_stops}
+            profile_memory={profile_memory}
+        """.replace('\t', ' '))
+        
         self.store = memstore.MemStore(redis_url=redis_url, no_cache=no_cache, namespace_config={
             'route': {
                 'cache': True,
@@ -132,7 +141,7 @@ class GTFS:
                     earliest_date = start_date
                 if end_date > latest_date:
                     latest_date = end_date
-        print(f"Loaded calendar with start dates ranging from {earliest_date} to {latest_date}")
+        logging.info(f"Loaded calendar with start dates ranging from {earliest_date} to {latest_date}")
 
     def _read_exceptions(self):
         with(open("data/calendar_dates.txt", "r")) as f:
@@ -294,7 +303,7 @@ class GTFS:
                         # Not filtering stops, so we should recognise all of them.
                         logging.warning(f"Unrecognised stop_id {stop_time_update.stop_id} in live data feed.")
                         continue
-                    if entity.trip_update.trip.schedule_relationship == TRIP_ADDED:
+                    if entity.trip_update.trip.schedule_relationship == TRIP_ADDED and stop_number is not None:
                         # We can only work with an unscheduled "added" trip if we are given the expected arrival time.
                         if stop_time_update.arrival.time:
                             num_added += 1
