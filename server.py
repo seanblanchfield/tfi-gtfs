@@ -76,6 +76,7 @@ def format_response(func):
             elif mime_type=='text/html':
                 html = f"<html><body><table><tr><th>{headers.replace(',', '</th><th>')}</th></tr>"
                 html += "".join([f"<tr><td>{row.replace(',', '</td><td>')}</td></tr>" for row in data])
+                html += "</table></body></html>"
                 return Response(html, mimetype=mime_type)
     
     return decorated_function
