@@ -59,7 +59,9 @@ class GTFS:
         # The set of trip_ids serving each stop. Used in conjunction with filter_stops. 
         self.stop_trips = collections.defaultdict(set) 
         self.rate_limit_count = 0
-        if self.store.get('status', "initialized") is None or no_cache:
+        if no_cache:
+            self.store.clear_data()
+        if self.store.get('status', "initialized") is None:
             self.load_static()
             # Reset filter_trips and stop_trips to allow garbage collection
             self.filter_trips = None
@@ -73,7 +75,6 @@ class GTFS:
         if profile_memory:
             logging.info("Profiling memory usage...")
             stats = self.store.profile_memory()
-            logging.info(f"Total used memory: {sum(stats.values()) / 1024 / 1024 :.02f} MB")
             for key in stats:
                 logging.info(f"{ key }: { stats[key] / 1024 / 1024 :.02f} MB")
     
@@ -256,7 +257,7 @@ class GTFS:
                 route_id, service_id = self._unpack_trip(packed_trip)
                 route_info = self.store.get('route', route_id)
                 if route_info is None:
-                    logging.warn(f"Unrecognised route_id {route_id} in trip {trip_id}")
+                    logging.warning(f"Unrecognised route_id {route_id} in trip {trip_id}")
                     return
                 agency_info = self.store.get('agency', route_info['agency'])
                 calendar_info = self.store.get('service', service_id)
@@ -307,11 +308,13 @@ class GTFS:
                         # We can only work with an unscheduled "added" trip if we are given the expected arrival time.
                         if stop_time_update.arrival.time:
                             num_added += 1
-                            self.store.set('live_additions', stop_number, {
+                            live_additions = self.store.get('live_additions', stop_number, [])
+                            live_additions.append({
                                 'route_id': entity.trip_update.trip.route_id,
                                 'arrival': datetime.datetime.fromtimestamp(stop_time_update.arrival.time),
                                 'timestamp': timestamp
                             })
+                            self.store.set('live_additions', stop_number, live_additions)
                     elif entity.trip_update.trip.schedule_relationship == TRIP_CANCELLED:
                         num_cancelled += 1
                         self.store.set('live_cancelations', trip_id, True)
@@ -407,6 +410,9 @@ class GTFS:
             try_hours = [now.hour - 1]
         try_hours.extend([h % 24 for h in range(now.hour, now.hour + int(max_wait.total_seconds() // 3600) + 1)])
         for hour in try_hours:
+            stop_times = self.store.get('stop_times', f"{stop_number}:{hour}")
+            if stop_times is None:
+                continue
             for packed_stop_data in self.store.get('stop_times', f"{stop_number}:{hour}"):
                 trip_id, arrival_hour, arrival_min, arrival_sec, stop_sequence = self._unpack_stop_data(packed_stop_data)
                 time_since_midnight = datetime.timedelta(hours=now.hour, minutes=now.minute, seconds=now.second)
@@ -450,10 +456,10 @@ class GTFS:
         # add any added trips
         for added_trip in self.store.get('live_additions', stop_number, []):
             route_info = self.store.get('route', added_trip['route_id'])
-            agency_info = self.store.get('agency', route_info['agency'])
+            agency_name = self.store.get('agency', route_info['agency'])
             scheduled_arrivals.append({
                 'route': route_info['name'],
-                'agency': agency_info['name'],
+                'agency': agency_name,
                 'scheduled_arrival': added_trip['arrival'],
                 'real_time_arrival': added_trip['arrival'],
             })
