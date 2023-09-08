@@ -1,5 +1,6 @@
 import os
 import csv
+import json
 import datetime
 import collections
 import time
@@ -22,10 +23,10 @@ def _b2s(b):
 class GTFS:
     def __init__(self, live_url:str, api_key: str, redis_url:str=None, rebuild_cache:bool = False, filter_stops:list=None, profile_memory:bool=False):
         # Exit with error if static data doesn't exist
-        if not static_data_exists():
+        if not static_data_ok():
             logging.error("No static GTFS data found. Download it with `python gtfs.py --download` and try again.")
             sys.exit(1)
-        
+
         logging.info(f"""Initializing GTFS with:
             live_url={live_url}
             api_key={api_key}
@@ -96,6 +97,8 @@ class GTFS:
         self.store.set('status', "initialized", True)
         logging.info("Persisting data.")
         self.store.write_cache()
+        # write a json file containing the self.filter_stops to cache_info.txt
+        write_cache_info(self.filter_stops)
     
     def _read_agencies(self):
         with(open("data/agency.txt", "r")) as f:
@@ -466,9 +469,32 @@ class GTFS:
         return scheduled_arrivals
 
 
-def static_data_exists():
-    return os.path.exists("data/routes.txt")
+def static_data_ok(max_days_old=None):
+    if os.path.exists("data/timestamp.txt"):
+        if max_days_old is None:
+            return True
+        else:
+            with open("data/timestamp.txt", "r") as f:
+                timestamp = datetime.datetime.fromisoformat(f.read())
+                if datetime.datetime.now() - timestamp < datetime.timedelta(days=max_days_old):
+                    return True
+    return False
 
+CACHE_INFO_FILE = "data/cache_info.txt"
+def write_cache_info(filter_stops):
+    with open(CACHE_INFO_FILE, "w") as f:
+        f.write(json.dumps({
+            'filter_stops': sorted(list(filter_stops)) if filter_stops else None
+        }, indent=4))
+        
+def check_cache_info(filter_stops):
+    if os.path.exists(CACHE_INFO_FILE):
+        with open(CACHE_INFO_FILE, "r") as f:
+            cache_info = json.load(f)
+            if cache_info.get('filter_stops') != sorted(list(filter_stops)) if filter_stops else None:
+                return False
+    return True
+            
 def download_static_data():
     # download the GTFS zip file and extract it into the data directory
     import urllib.request
@@ -488,6 +514,12 @@ def download_static_data():
                     shutil.copy(os.path.join("data", file), "data/bak/")
             # extract the new .txt files into "data"
             zip_ref.extractall("data")
+            # Ideally the feed would include a `feed_info.txt` file that has a 
+            # `feed_end_date` field, but it doesn't, so we'll make our own.
+            # (see https://gtfs.org/schedule/reference/#feed_infotxt for details)
+            # write a file called "timestamp.txt" that contains the ISO timestamp of the last time the data was updated
+            with open("data/timestamp.txt", "w") as f:
+                f.write(datetime.datetime.now().isoformat())
             # remove the cache file
             if os.path.exists("data/data.pickle"):
                 os.remove("data/data.pickle")

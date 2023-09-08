@@ -27,8 +27,6 @@ class Store:
             self.redis = None
         self.reload_cache()
     
-    
-    
     def clear_cache(self):
         if self.redis:
             self.redis.flushdb()

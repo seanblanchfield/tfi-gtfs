@@ -22,7 +22,7 @@ import waitress
 from functools import wraps
 from crontab import CronTab
 
-from gtfs import GTFS, make_base_arg_parser, static_data_exists
+from gtfs import GTFS, make_base_arg_parser, static_data_ok, check_cache_info
 import settings
 
 
@@ -94,6 +94,7 @@ def start_scheduled_jobs(gtfs, polling_period, download_schedule):
         next_download = datetime.datetime.utcnow() + datetime.timedelta(seconds=cron.next(default_utc=True))
         while True:
             # exponential backoff if the last poll was rate limited
+            # TODO poll_backoff should increment and be reset
             time.sleep(int(polling_period + polling_period * 1.5**poll_backoff))
             now = time.time()
             logging.info("Updating from live feed.")
@@ -132,18 +133,37 @@ if __name__ == "__main__":
     logging.basicConfig(level=getattr(logging, args.log_level))
 
     # Check if the static GTFS data should be downloaded
-    if not static_data_exists():
-        proc = subprocess.Popen(["python", "gtfs.py", "--download", "--rebuild_cache"])
+    cron = CronTab(args.download)
+    # work out the max allowable days old that the static day is allowed to be,
+    # based on the download schedule
+    max_days = (- cron.previous(default_utc=True) ) // (60 * 60 * 24)
+    
+    filter_stops = None
+    if args.filter is not None:
+        filter_stops = args.filter.split(',')
+    
+    # prepare to fork a sub-process to download or reparse static data
+    sub_process_args = None
+    if not static_data_ok(max_days):
+        sub_process_args = ["python", "gtfs.py", "--download", "--rebuild_cache"]
+    elif not check_cache_info(filter_stops):
+        logging.info(f"Cache is for a different list of filter stops. Rebuilding.")
+        sub_process_args = ["python", "gtfs.py", "--rebuild_cache"]
+    
+    if sub_process_args:
+        if args.filter is not None:
+            sub_process_args += ["--filter", args.filter]
+        # fork the process and wait for it.
+        # forking allows us to avoid incurring the memory overhead of parsing the data in this
+        proc = subprocess.Popen(sub_process_args)
         proc.wait()
     
     # set up the GTFS object
-    if args.filter is not None:
-        args.filter = args.filter.split(',')
     gtfs = GTFS(
         live_url=args.live_url, 
         api_key=args.api_key, 
         redis_url=args.redis,
-        filter_stops=args.filter,
+        filter_stops=filter_stops,
         profile_memory=args.profile
     )
     start_scheduled_jobs(gtfs, args.polling_period, args.download)
