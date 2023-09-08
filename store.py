@@ -11,8 +11,8 @@ import size
 
 DATA_PATH = "data/data.pickle"
 
-class MemStore:
-    def __init__(self, redis_url:str=None, no_cache:bool = False, namespace_config:dict[dict[str]]={}):
+class Store:
+    def __init__(self, redis_url:str=None, namespace_config:dict[dict[str]]={}):
         # namespace_config is a dictionary specifying treatment of different pieces of data.
         # Each key is the prefix ending before the first '%' in keys that it should be matched against.
         # Potential values are:
@@ -25,23 +25,31 @@ class MemStore:
             self.redis = redis.from_url(redis_url)
         else:
             self.redis = None
-            if os.path.exists(DATA_PATH) and not no_cache:
-                with open(DATA_PATH, "rb") as f:
-                    logging.info("Loading GTFS static data from cache.")
-                    self.data = pickle.load(f)
+        self.reload_cache()
     
-    def clear_data(self):
+    
+    
+    def clear_cache(self):
         if self.redis:
             self.redis.flushdb()
         else:
             self.data = collections.defaultdict(dict)
+        # Remove the cache
+        if os.path.exists(DATA_PATH):
+            os.remove(DATA_PATH)
     
-    def persist_data(self):
+    def write_cache(self):
         if self.redis:
             self.redis.save()
         else:
             with open(DATA_PATH, "wb") as f:
                 pickle.dump(self.data, f)
+    
+    def reload_cache(self):
+        if os.path.exists(DATA_PATH):
+            with open(DATA_PATH, "rb") as f:
+                logging.info("Loading GTFS static data from cache.")
+                self.data = pickle.load(f)
     
     def profile_memory(self):
         res = {}

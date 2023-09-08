@@ -11,6 +11,7 @@
 import datetime
 import logging
 import threading
+import subprocess
 import time
 
 from flask import Flask, jsonify, request, Response
@@ -21,7 +22,7 @@ import waitress
 from functools import wraps
 from crontab import CronTab
 
-from gtfs import GTFS, make_base_arg_parser, download_static_data
+from gtfs import GTFS, make_base_arg_parser, static_data_exists
 import settings
 
 
@@ -102,8 +103,14 @@ def start_scheduled_jobs(gtfs, polling_period, download_schedule):
             # Check if the static GTFS data should be downloaded
             now = datetime.datetime.utcnow()
             if now > next_download:
-                download_static_data()
-                gtfs.load_static()
+                # Fork a subprocess to download static data and rebuild the cache
+                # using `gtfs.py --download --rebuild_cache`.
+                # This allows us to avoid incurring the memory overhead of parsing the data in this 
+                # long-lived process.
+                proc = subprocess.Popen(["python", "gtfs.py", "--download", "--rebuild_cache"])
+                proc.wait()
+                # Not reload the cache
+                gtfs.store.reload_cache()
                 next_download = now + datetime.timedelta(seconds=cron.next(default_utc=True))
     t = threading.Thread(target=refresh)
     t.daemon = True
@@ -124,6 +131,11 @@ if __name__ == "__main__":
     args = parser.parse_args()
     logging.basicConfig(level=getattr(logging, args.log_level))
 
+    # Check if the static GTFS data should be downloaded
+    if not static_data_exists():
+        proc = subprocess.Popen(["python", "gtfs.py", "--download", "--rebuild_cache"])
+        proc.wait()
+    
     # set up the GTFS object
     if args.filter is not None:
         args.filter = args.filter.split(',')
@@ -131,7 +143,6 @@ if __name__ == "__main__":
         live_url=args.live_url, 
         api_key=args.api_key, 
         redis_url=args.redis,
-        no_cache=args.no_cache,
         filter_stops=args.filter,
         profile_memory=args.profile
     )

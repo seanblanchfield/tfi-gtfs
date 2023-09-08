@@ -11,7 +11,7 @@ import argparse
 
 from google.transit import gtfs_realtime_pb2
 
-import memstore
+import store
 
 def _s2b(s):
     return s.encode('utf-8')
@@ -20,17 +20,29 @@ def _b2s(b):
     return b.decode('utf-8').split(chr(0))[0]
 
 class GTFS:
-    def __init__(self, live_url:str, api_key: str, redis_url:str=None, no_cache:bool = False, filter_stops:list=None, profile_memory:bool=False):
+    def __init__(self, live_url:str, api_key: str, redis_url:str=None, rebuild_cache:bool = False, filter_stops:list=None, profile_memory:bool=False):
+        # Exit with error if static data doesn't exist
+        if not static_data_exists():
+            logging.error("No static GTFS data found. Download it with `python gtfs.py --download` and try again.")
+            sys.exit(1)
+        
         logging.info(f"""Initializing GTFS with:
             live_url={live_url}
             api_key={api_key}
             redis_url={redis_url}
-            no_cache={no_cache}
+            rebuild_cache={rebuild_cache}
             filter_stops={filter_stops}
             profile_memory={profile_memory}
         """.replace('\t', ' '))
+        self.live_url = live_url
+        self.api_key = api_key
+        self.filter_stops = set(filter_stops) if filter_stops is not None else None
+        self.filter_trips = None
+        # The set of trip_ids serving each stop. Used in conjunction with filter_stops. 
+        self.stop_trips = collections.defaultdict(set) 
+        self.rate_limit_count = 0
         
-        self.store = memstore.MemStore(redis_url=redis_url, no_cache=no_cache, namespace_config={
+        self.store = store.Store(redis_url=redis_url, namespace_config={
             'route': {
                 'cache': True,
                 'expiry': 60 * 60 # 1 hour
@@ -49,29 +61,16 @@ class GTFS:
             },
             # service, stops, stop_numbers, trips
         })
-        # Download static data if it doesn't exist
-        if not static_data_exists():
-            download_static_data()
-        self.live_url = live_url
-        self.api_key = api_key
-        self.filter_stops = set(filter_stops) if filter_stops is not None else None
-        self.filter_trips = None
-        # The set of trip_ids serving each stop. Used in conjunction with filter_stops. 
-        self.stop_trips = collections.defaultdict(set) 
-        self.rate_limit_count = 0
-        if no_cache:
-            self.store.clear_data()
+        if rebuild_cache:
+            self.store.clear_cache()
+
         if self.store.get('status', "initialized") is None:
             self.load_static()
-            # Reset filter_trips and stop_trips to allow garbage collection
-            self.filter_trips = None
-            self.stop_trips = None
-        else:
-            logging.info("Loading GTFS static data from cache.")
         
         logging.info("Updating from live feed.")
         self.refresh_live_data()
         logging.info("Live feed loaded.")
+
         if profile_memory:
             logging.info("Profiling memory usage...")
             stats = self.store.profile_memory()
@@ -96,7 +95,7 @@ class GTFS:
         self._read_trips()
         self.store.set('status', "initialized", True)
         logging.info("Persisting data.")
-        self.store.persist_data()
+        self.store.write_cache()
     
     def _read_agencies(self):
         with(open("data/agency.txt", "r")) as f:
@@ -504,8 +503,6 @@ def make_base_arg_parser(description):
                         help=f"Your API key for the live GTFS feed")
     parser.add_argument('-r', '--redis', type=str, default=settings.REDIS_URL,
                         help=f"URL of a redis instance to use as a data store backend (default: {settings.REDIS_URL})")
-    parser.add_argument('--no_cache', action='store_true',default=False,
-                        help="Ignore cached GTFS data and load static data from scratch")
     parser.add_argument('-w', '--max_wait', type=int, default=settings.MAX_WAIT,
                         help=f"Maximum minutes in the future to return results for (default: {settings.MAX_WAIT})")
     parser.add_argument('-f', '--filter', type=str, default=settings.FILTER_STOPS,
@@ -524,6 +521,8 @@ if __name__ == "__main__":
     
     parser.add_argument('--download', action='store_true', default=False,
                         help='Download and extract the static GTFS archive and exit')
+    parser.add_argument('--rebuild_cache', action='store_true',default=False,
+                        help="Ignore cached GTFS data and load static data from scratch")
     parser.add_argument('stop_numbers', metavar='stop numbers', type=str, nargs='*',
                         help='Stop numbers to query (as shown on the bus stop)')
     args = parser.parse_args()
@@ -532,25 +531,19 @@ if __name__ == "__main__":
     # if the --download option was specified, download the static GTFS archive and exit
     if args.download:
         download_static_data()
-        sys.exit(0)
     
-    # additional unnamed arguments specify a list of stop codes to query
-    if not args.stop_numbers:
-        # print an error message and exit if no stop codes were specified
-        print("No stop numbers specified.")
-        sys.exit(1)
-
     if args.filter is not None:
         args.filter = args.filter.split(',')
     gtfs = GTFS(
         live_url=args.live_url, 
         api_key=args.api_key, 
         redis_url=args.redis,
-        no_cache=args.no_cache,
+        rebuild_cache=args.rebuild_cache,
         filter_stops=args.filter,
         profile_memory=args.profile
     )
-        
+
+    # Get results for each stop_number, if any
     now = datetime.datetime.now()
     for stop_number in args.stop_numbers:
         if not gtfs.is_valid_stop_number(stop_number):
