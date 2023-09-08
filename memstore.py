@@ -30,6 +30,12 @@ class MemStore:
                     logging.info("Loading GTFS static data from cache.")
                     self.data = pickle.load(f)
     
+    def clear_data(self):
+        if self.redis:
+            self.redis.flushdb()
+        else:
+            self.data = collections.defaultdict(dict)
+    
     def persist_data(self):
         if self.redis:
             self.redis.save()
