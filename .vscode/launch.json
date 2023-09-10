@@ -12,12 +12,6 @@
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
-                "--filter",
-                "2189",
-                "--redis",
-                "redis://localhost:6379",
-                "--no_cache",
-                "--profile"
             ]
         },
         {
@@ -28,10 +22,10 @@
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
-                "2189",
-                "1409",
-                "--logging",
-                "INFO"
+                "--download",
+                "--rebuild_cache",
+                // "--logging",
+                // "INFO"
             ]
         }
     ]
