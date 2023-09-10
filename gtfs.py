@@ -42,26 +42,13 @@ class GTFS:
         # The set of trip_ids serving each stop. Used in conjunction with filter_stops. 
         self.stop_trips = collections.defaultdict(set) 
         self.rate_limit_count = 0
-        
-        self.store = store.Store(redis_url=redis_url, namespace_config={
-            'route': {
+        namespace_config = {}
+        if redis_url:
+            namespace_config['route'] = namespace_config['service'] = namespace_config['stop'] = namespace_config['stop_numbers'] = {
                 'cache': True,
-                'expiry': 60 * 60 # 1 hour
-            },
-            'service': {
-                'cache': True,
-                'expiry': 60 * 60 # 1 hour
-            },
-            'stop': {
-                'cache': True,
-                'expiry': 60 * 60 # 1 hour
-            },
-            'stop_numbers': {
-                'cache': True,
-                'expiry': 60 * 60 # 1 hour
-            },
-            # service, stops, stop_numbers, trips
-        })
+                'expiry': 3600
+            }
+        self.store = store.Store(redis_url=redis_url, namespace_config=namespace_config)
         if rebuild_cache:
             self.store.clear_cache()
 
@@ -404,7 +391,7 @@ class GTFS:
         # get all the scheduled arrivals at a given stop_id
         # returns a list of (trip_id, arrival_time, stop_sequence)
         scheduled_arrivals = []
-        # try the previous hour and the next few (per max_wait)
+        # try the previous hour and the next few (per minutes)
         try_hours: list
         if now.hour == 0:
             try_hours = [23]
@@ -469,14 +456,14 @@ class GTFS:
         return scheduled_arrivals
 
 
-def static_data_ok(max_days_old=None):
+def static_data_ok(max_seconds_old=None):
     if os.path.exists("data/timestamp.txt"):
-        if max_days_old is None:
+        if max_seconds_old is None:
             return True
         else:
             with open("data/timestamp.txt", "r") as f:
                 timestamp = datetime.datetime.fromisoformat(f.read())
-                if datetime.datetime.now() - timestamp < datetime.timedelta(days=max_days_old):
+                if datetime.datetime.utcnow() - timestamp < datetime.timedelta(seconds=max_seconds_old):
                     return True
     return False
 
@@ -488,11 +475,12 @@ def write_cache_info(filter_stops):
         }, indent=4))
         
 def check_cache_info(filter_stops):
-    if os.path.exists(CACHE_INFO_FILE):
-        with open(CACHE_INFO_FILE, "r") as f:
-            cache_info = json.load(f)
-            if cache_info.get('filter_stops') != sorted(list(filter_stops)) if filter_stops else None:
-                return False
+    if not os.path.exists(CACHE_INFO_FILE):
+        return False
+    with open(CACHE_INFO_FILE, "r") as f:
+        cache_info = json.load(f)
+        if cache_info.get('filter_stops') != sorted(list(filter_stops)) if filter_stops else None:
+            return False
     return True
             
 def download_static_data():
@@ -519,10 +507,10 @@ def download_static_data():
             # (see https://gtfs.org/schedule/reference/#feed_infotxt for details)
             # write a file called "timestamp.txt" that contains the ISO timestamp of the last time the data was updated
             with open("data/timestamp.txt", "w") as f:
-                f.write(datetime.datetime.now().isoformat())
+                f.write(datetime.datetime.utcnow().isoformat())
             # remove the cache file
-            if os.path.exists("data/data.pickle"):
-                os.remove("data/data.pickle")
+            if os.path.exists(store.DATA_PATH):
+                os.remove(store.DATA_PATH)
     logging.info("Done.")
 
 
@@ -535,9 +523,9 @@ def make_base_arg_parser(description):
                         help=f"Your API key for the live GTFS feed")
     parser.add_argument('-r', '--redis', type=str, default=settings.REDIS_URL,
                         help=f"URL of a redis instance to use as a data store backend (default: {settings.REDIS_URL})")
-    parser.add_argument('-w', '--max_wait', type=int, default=settings.MAX_WAIT,
-                        help=f"Maximum minutes in the future to return results for (default: {settings.MAX_WAIT})")
-    parser.add_argument('-f', '--filter', type=str, default=settings.FILTER_STOPS,
+    parser.add_argument('-m', '--minutes', type=int, default=settings.MAX_MINUTES,
+                        help=f"Maximum minutes in the future to return results for (default: {settings.MAX_MINUTES})")
+    parser.add_argument('-f', '--filter', type=str, default=None,
                         help=f"Comma separated list of stop numbers that stored data must relate to, for memory optimization. If not specified, all stops are included. (default: {settings.FILTER_STOPS})")
     parser.add_argument('--logging', type=str, choices=['DEBUG', 'INFO', 'WARN', 'ERROR'], default=settings.LOG_LEVEL, dest='log_level',
                         help=f"Print verbose output (default: {settings.LOG_LEVEL}))")
@@ -564,14 +552,15 @@ if __name__ == "__main__":
     if args.download:
         download_static_data()
     
+    filter_stops = settings.FILTER_STOPS
     if args.filter is not None:
-        args.filter = args.filter.split(',')
+        filter_stops = args.filter.split(',')
     gtfs = GTFS(
         live_url=args.live_url, 
         api_key=args.api_key, 
         redis_url=args.redis,
         rebuild_cache=args.rebuild_cache,
-        filter_stops=args.filter,
+        filter_stops=filter_stops,
         profile_memory=args.profile
     )
 
@@ -581,7 +570,7 @@ if __name__ == "__main__":
         if not gtfs.is_valid_stop_number(stop_number):
             print(f"Stop number {stop_number} is not recognised.")
             continue
-        arrivals = gtfs.get_scheduled_arrivals(stop_number, now, datetime.timedelta(minutes=args.max_wait))
+        arrivals = gtfs.get_scheduled_arrivals(stop_number, now, datetime.timedelta(minutes=args.minutes))
         for arrival in arrivals:
             rt_arrival = "N/A"
             if arrival['real_time_arrival']:

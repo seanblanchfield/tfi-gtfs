@@ -125,6 +125,8 @@ if __name__ == "__main__":
                         help=f"Host to listen on (default: {settings.HOST})")
     parser.add_argument('-P', '--port', type=int, default=settings.PORT,
                         help=f"Port to listen on (default: {settings.PORT})")
+    parser.add_argument('-w', '--workers', type=int, default=settings.WORKERS,
+                        help=f"Number of worker threads to use (default: {settings.WORKERS})")
     parser.add_argument('-p', '--polling_period', type=int, default=settings.POLLING_PERIOD,
                         help=f"Polling period for live GTFS feed (default: {settings.POLLING_PERIOD})")
     parser.add_argument('-d', '--download', type=str, default=settings.DOWNLOAD_SCHEDULE,
@@ -136,7 +138,7 @@ if __name__ == "__main__":
     cron = CronTab(args.download)
     # work out the max allowable days old that the static day is allowed to be,
     # based on the download schedule
-    max_days = (- cron.previous(default_utc=True) ) // (60 * 60 * 24)
+    max_seconds_old = - cron.previous(default_utc=True) 
     
     filter_stops = None
     if args.filter is not None:
@@ -144,15 +146,17 @@ if __name__ == "__main__":
     
     # prepare to fork a sub-process to download or reparse static data
     sub_process_args = None
-    if not static_data_ok(max_days):
+    if not static_data_ok(max_seconds_old):
         sub_process_args = ["python", "gtfs.py", "--download", "--rebuild_cache"]
     elif not check_cache_info(filter_stops):
-        logging.info(f"Cache is for a different list of filter stops. Rebuilding.")
+        logging.info(f"Rebuilding.")
         sub_process_args = ["python", "gtfs.py", "--rebuild_cache"]
     
     if sub_process_args:
         if args.filter is not None:
             sub_process_args += ["--filter", args.filter]
+        if args.redis is not None:
+            sub_process_args += ["--redis", args.redis]
         # fork the process and wait for it.
         # forking allows us to avoid incurring the memory overhead of parsing the data in this
         proc = subprocess.Popen(sub_process_args)
@@ -177,9 +181,9 @@ if __name__ == "__main__":
         arrivals = {}
         for stop_number in stop_numbers:
             if gtfs.is_valid_stop_number(stop_number):
-                arrivals[stop_number] = gtfs.get_scheduled_arrivals(stop_number, now, datetime.timedelta(minutes=args.max_wait))
+                arrivals[stop_number] = gtfs.get_scheduled_arrivals(stop_number, now, datetime.timedelta(minutes=args.minutes))
         return arrivals
     
     # start server
     print("Waiting for requests...")
-    waitress.serve(app, host=args.host, port=args.port, threads=1)
+    waitress.serve(app, host=args.host, port=args.port, threads=args.workers)
