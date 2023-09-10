@@ -9,7 +9,7 @@ import collections
 
 import size
 
-DATA_PATH = "data/data.pickle"
+DATA_PATH = "data/cache.pickle"
 
 class Store:
     def __init__(self, redis_url:str=None, namespace_config:dict[dict[str]]={}):
@@ -68,20 +68,26 @@ class Store:
         value = None
         cached_item = self.data.get(namespace, {}).get(key)
         if cached_item:
-            t, cached_value = cached_item
-            if expiry is None or now - t < expiry:
-                value = cached_value
+            if expiry:
+                t, cached_value = cached_item
+                if expiry is None or now - t < expiry:
+                    value = cached_value
+                else:
+                    del self.data[namespace][key]
             else:
-                del self.data[namespace][key]
+                value = cached_item
         
         if value is None and self.redis:
             value = self.redis.hget(namespace, key)
             if value is not None:
-                t, value = pickle.loads(value)
-                if expiry and now - t > expiry:
-                    # if it's expired, delete it
-                    self.redis.hdel(namespace, key)
-                    value = None
+                if expiry:
+                    t, value = pickle.loads(value)
+                    if expiry and now - t > expiry:
+                        # if it's expired, delete it
+                        self.redis.hdel(namespace, key)
+                        value = None
+                else:
+                    value = pickle.loads(value)
             # if we still don't have a value, use the default
             if value is None:
                 value = default
@@ -93,12 +99,14 @@ class Store:
 
     def set(self, namespace, key, value):
         config = self.namespace_config.get(namespace, {})
-        t = int(time.time())
         expiry = config.get('expiry')
+        if expiry:
+            t = int(time.time())
+            value = (t, value)
         if self.redis:
-            self.redis.hset(namespace, key, pickle.dumps((t, value)))
+            self.redis.hset(namespace, key, pickle.dumps(value))
         else:
-            self.data[namespace][key] = (t, value)
+            self.data[namespace][key] = value
     
     # set operations including add, remove and has
     def add(self, namespace, value):
@@ -109,7 +117,6 @@ class Store:
             self.data.setdefault(namespace, set()).add(value)
     
     def remove(self, namespace, value):
-        config = self.namespace_config.get(namespace, {})
         if self.redis:
             self.redis.srem(namespace, value)
         else:
