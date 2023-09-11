@@ -27,6 +27,17 @@
                 // "--logging",
                 // "INFO"
             ]
+        },
+        // config for unit tests
+        {
+            "name": "Python: Tests",
+            "type": "python",
+            "request": "launch",
+            "program": "${workspaceFolder}/test.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+            ]
         }
     ]
 }
