@@ -21,7 +21,7 @@ def _b2s(b):
     return b.decode('utf-8').split(chr(0))[0]
 
 class GTFS:
-    def __init__(self, live_url:str, api_key: str, redis_url:str=None, rebuild_cache:bool = False, filter_stops:list=None, profile_memory:bool=False):
+    def __init__(self, live_url:str, api_key: str, redis_url:str=None, rebuild_cache:bool = False, filter_stops:list=None, data_path:str = None, profile_memory:bool=False):
         # Exit with error if static data doesn't exist
         if not static_data_ok():
             logging.error("No static GTFS data found. Download it with `python gtfs.py --download` and try again.")
@@ -48,16 +48,12 @@ class GTFS:
                 'cache': True,
                 'expiry': 3600
             }
-        self.store = store.Store(redis_url=redis_url, namespace_config=namespace_config)
+        self.store = store.Store(redis_url=redis_url, namespace_config=namespace_config, data_path=data_path)
         if rebuild_cache:
             self.store.clear_cache()
 
         if self.store.get('status', "initialized") is None:
             self.load_static()
-        
-        logging.info("Updating from live feed.")
-        self.refresh_live_data()
-        logging.info("Live feed loaded.")
 
         if profile_memory:
             logging.info("Profiling memory usage...")
@@ -335,7 +331,8 @@ class GTFS:
                             'timestamp': timestamp
                         })
 
-                self.store.set('live_delays', trip_id, trip_delays)
+                if len(trip_delays):
+                    self.store.set('live_delays', trip_id, trip_delays)
         logging.info(f"Got {num_updates} trip updates, {num_unrecognised_trips} unrecognised trips, {num_added} added trips, {num_cancelled} cancelled trips")
     
     def refresh_live_data(self):
@@ -473,7 +470,10 @@ def write_cache_info(filter_stops):
         f.write(json.dumps({
             'filter_stops': sorted(list(filter_stops)) if filter_stops else None
         }, indent=4))
-        
+
+def check_cache_file():
+    return os.path.exists(store.DATA_PATH)
+
 def check_cache_info(filter_stops):
     if not os.path.exists(CACHE_INFO_FILE):
         return False
@@ -563,6 +563,10 @@ if __name__ == "__main__":
         filter_stops=filter_stops,
         profile_memory=args.profile
     )
+
+    logging.info("Updating from live feed.")
+    gtfs.refresh_live_data()
+    logging.info("Live feed loaded.")
 
     # Get results for each stop_number, if any
     now = datetime.datetime.now()
