@@ -12,14 +12,14 @@ import size
 DATA_PATH = "data/cache.pickle"
 
 class Store:
-    def __init__(self, redis_url:str=None, namespace_config:dict[dict[str]]={}, data_path=DATA_PATH):
+    def __init__(self, redis_url:str=None, namespace_config:dict[dict[str]]={}, data_path:str=None):
         # namespace_config is a dictionary specifying treatment of different pieces of data.
         # Each key is the prefix ending before the first '%' in keys that it should be matched against.
         # Potential values are:
         #  - cache: store the value in memory as well as redis for faster retrieval next time
         #  - expiry: set an expiry time on the key
         self.namespace_config = namespace_config
-        self.data_path = data_path
+        self.data_path = data_path or DATA_PATH
         self.data = collections.defaultdict(dict)
         if redis_url:
             logging.info("Using redis for data storage at %s", redis_url)
