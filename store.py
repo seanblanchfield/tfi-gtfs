@@ -12,13 +12,14 @@ import size
 DATA_PATH = "data/cache.pickle"
 
 class Store:
-    def __init__(self, redis_url:str=None, namespace_config:dict[dict[str]]={}):
+    def __init__(self, redis_url:str=None, namespace_config:dict[dict[str]]={}, data_path=DATA_PATH):
         # namespace_config is a dictionary specifying treatment of different pieces of data.
         # Each key is the prefix ending before the first '%' in keys that it should be matched against.
         # Potential values are:
         #  - cache: store the value in memory as well as redis for faster retrieval next time
         #  - expiry: set an expiry time on the key
         self.namespace_config = namespace_config
+        self.data_path = data_path
         self.data = collections.defaultdict(dict)
         if redis_url:
             logging.info("Using redis for data storage at %s", redis_url)
@@ -33,19 +34,19 @@ class Store:
         else:
             self.data = collections.defaultdict(dict)
         # Remove the cache
-        if os.path.exists(DATA_PATH):
-            os.remove(DATA_PATH)
+        if os.path.exists(self.data_path):
+            os.remove(self.data_path)
     
     def write_cache(self):
         if self.redis:
             self.redis.save()
         else:
-            with open(DATA_PATH, "wb") as f:
+            with open(self.data_path, "wb") as f:
                 pickle.dump(self.data, f)
     
     def reload_cache(self):
-        if os.path.exists(DATA_PATH):
-            with open(DATA_PATH, "rb") as f:
+        if os.path.exists(self.data_path):
+            with open(self.data_path, "rb") as f:
                 logging.info("Loading GTFS static data from cache.")
                 self.data = pickle.load(f)
     
@@ -120,7 +121,7 @@ class Store:
         if self.redis:
             self.redis.srem(namespace, value)
         else:
-            self.data.setdefault(namespace, set()).remove(value)
+            self.data.setdefault(namespace, set()).discard(value)
     
     def has(self, namespace, value):
         config = self.namespace_config.get(namespace, {})
@@ -128,6 +129,12 @@ class Store:
             return self.redis.sismember(namespace, value) == 1
         else:
             return value in self.data.setdefault(namespace, set())
-        
+    
+    def cardinality(self, namespace):
+        if self.redis:
+            return self.redis.scard(namespace)
+        else:
+            return len(self.data.setdefault(namespace, set()))
+
 
     
