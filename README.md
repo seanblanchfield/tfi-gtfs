@@ -156,7 +156,7 @@ curl "http://localhost:7341/api/v1/arrivals?stop=2189&stop=1509"
 ```
 
 ### Finding your stop number
-Stop numbers are printed on bus stops. You can also find relevant stops on the official [TFI route map](https://www.transportforireland.ie/getting-around/by-bus/route-maps/). Click on a stop to see its stop number.
+Stop numbers are printed on bus stops. You can also find relevant stops on the official [TFI journey planner](https://www.transportforireland.ie/plan-a-journey/). Click on a stop to see its stop number.
 
 ## Response format
 
