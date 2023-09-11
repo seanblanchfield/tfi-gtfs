@@ -88,9 +88,6 @@ def start_scheduled_jobs(gtfs, polling_period, download_schedule):
 
     # start a thread that refreshes live data every polling_period seconds
     def refresh():
-        last_poll = 0
-        poll_backoff = 0
-        rate_limit_count = 0
         next_download = datetime.datetime.utcnow() + datetime.timedelta(seconds=cron.next(default_utc=True))
         while True:
             logging.info("Updating from live feed.")
@@ -99,7 +96,7 @@ def start_scheduled_jobs(gtfs, polling_period, download_schedule):
             
             # exponential backoff if the last poll was rate limited
             # TODO poll_backoff should increment and be reset
-            time.sleep(int(polling_period + polling_period * 1.5**poll_backoff))
+            time.sleep(int(polling_period + polling_period * 1.5**rate_limit_count))
 
             # Check if the static GTFS data should be downloaded
             now = datetime.datetime.utcnow()
