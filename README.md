@@ -100,7 +100,7 @@ python3 gtfs.py --download
 
 Query specific stops:
 ``` bash
-python3 gtfs.py 2189 1409
+python3 gtfs.py 1358 7581
 ```
 
 > Note that running `gtfs.py` in this way is slow because a lot of data needs to be loaded from disk into memory every time that it is invoked. It is convenient for testing or very occasional use, but in production, you should run `server.py`, which only has to load data once at startup.
@@ -142,17 +142,17 @@ This project is also available as a *Home Assistant* addon. Visit my [Home Assis
 ## Querying the server
 The API is hosted at the path `/api/v1/arrivals`. You can query it by supplying one or more "stop" query parameters. 
 
-For example, if the server is running on localhost, visit [http://localhost:7341/api/v1/arrivals?stop=2189] in your web browser to receive a table of upcoming arrivals at stop `2189`.
+For example, if the server is running on localhost, visit [http://localhost:7341/api/v1/arrivals?stop=1358] in your web browser to receive a table of upcoming arrivals at stop `1358`.
 
 
 Alternatively, using `cURL`, run the following command:
 ``` bash
-curl "http://localhost:7341/api/v1/arrivals?stop=2189"
+curl "http://localhost:7341/api/v1/arrivals?stop=1358"
 ```
 
 Multiple stops can be queried by providing multiple `stop` parameters. For example:
 ``` bash
-curl "http://localhost:7341/api/v1/arrivals?stop=2189&stop=1509"
+curl "http://localhost:7341/api/v1/arrivals?stop=1358&stop=7581"
 ```
 
 ### Finding your stop number
@@ -163,15 +163,15 @@ Stop numbers are printed on bus stops. You can also find relevant stops on the o
 The server returns responses in JSON format by default. It also supports YAML, CSV and HTML. Here are some commands that test this using cURL:
 ``` bash
 # JSON (default)
-curl "http://localhost:7341/api/v1/arrivals?stop=2189" -H "Accept: application/json"
+curl "http://localhost:7341/api/v1/arrivals?stop=1358" -H "Accept: application/json"
 # YAML
-curl "http://localhost:7341/api/v1/arrivals?stop=2189" -H "Accept: application/yaml"
+curl "http://localhost:7341/api/v1/arrivals?stop=1358" -H "Accept: application/yaml"
 # CSV
-curl "http://localhost:7341/api/v1/arrivals?stop=2189" -H "Accept: text/csv"
+curl "http://localhost:7341/api/v1/arrivals?stop=1358" -H "Accept: text/csv"
 # Plain text also returns CSV
-curl "http://localhost:7341/api/v1/arrivals?stop=2189" -H "Accept: text/plain"
+curl "http://localhost:7341/api/v1/arrivals?stop=1358" -H "Accept: text/plain"
 # HTML
-curl "http://localhost:7341/api/v1/arrivals?stop=2189" -H "Accept: text/html"
+curl "http://localhost:7341/api/v1/arrivals?stop=1358" -H "Accept: text/html"
 ```
 
 If you visit the URL from your web browser, you web browser will automatically send an `Accept: text/html` header, so you should receive the response as a HTML table. 
