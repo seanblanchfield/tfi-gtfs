@@ -39,6 +39,116 @@ class JsonProvider(DefaultJSONProvider):
 
 app.json = JsonProvider(app)
 
+# Some templates to render HTML responses with when queried with accept: text/html
+
+HTML_TEMPLATE = """
+<html>
+    <head>
+        <title>GTFS API</title>
+        <style>
+            {css}
+        </style>
+    </head>
+    <body>
+        <select name="accept" id="accept" style="float: right">
+            <option value="text/html">HTML</option>
+            <option value="application/json">JSON</option>
+            <option value="application/yaml">YAML</option>
+            <option value="text/csv">CSV</option>
+            <option value="text/plain">Plain</option>
+        </select>
+        <form action="/api/v1/arrivals" method="get" id="form">
+            <input type="text" name="stop" id="stop1" placeholder="Stop number" />
+            <input type="text" name="stop" id="stop2" placeholder="Stop number" />
+            <button type="submit">Submit</button>
+        </form>
+        <table>
+        <thead>
+            <tr>
+                {headers}
+            </tr>
+        </thead>
+        <tbody>
+            {rows}
+        </tbody>
+        </table>
+        <script>
+            {script}
+        </script>
+    </body>
+</html>
+"""
+CSS = """
+table {
+    color: #333;
+    background: white;
+    border: 1px solid grey;
+    font-size: 12pt;
+    border-collapse: collapse;
+}
+table thead th {
+    color: #777;
+    background: lightgrey;
+}
+table td {
+    padding: 5px 10px;
+}
+table tr:nth-child(even) {
+    background: #eee;
+}
+"""
+SCRIPT = """
+// Initialise the form with the stop numbers from the query string
+function initStopNumbers() {
+    let stops = window.location.search.substring(1).split('&').filter(q => q.startsWith('stop=')).map(q => q.replace('stop=', ''));
+    let stopNumber = 1;
+    for (let stop of stops) {
+        let input = document.getElementById(`stop${stopNumber}`);
+        input.value = stop;
+        stopNumber++;
+    }
+}
+
+// Explicitly handle form submission so we can alter the accept header
+function submitHandler(e) {
+    const form = document.getElementById('form');
+    e.preventDefault();
+    const xhr = new XMLHttpRequest();
+    const formData = new FormData(form);
+    const accept = document.getElementById("accept").value;
+    let url = form.getAttribute("action") + "?" + new URLSearchParams(formData).toString();
+    // remove any empty stop query params
+    if(url.indexOf('stop=&') != -1)
+        url = url.replace('stop=&', '');
+    if(url.endsWith("stop="))
+        url = url.substring(0, url.length - 5);
+    if(url.endsWith("&"))
+        url = url.substring(0, url.length - 1);
+    xhr.open(form.method, url);
+    // set the accept header to the value of the accept query parameter
+    xhr.setRequestHeader('Accept', accept);
+    xhr.onload = () => {
+        if (xhr.readyState === xhr.DONE && xhr.status === 200) {
+            if(xhr.getResponseHeader("content-type").indexOf('text/html') != -1) {
+                document.body.innerHTML = xhr.response;
+                // update the window location so that the query string is updated
+                window.history.pushState({}, '', url);
+                initStopNumbers();
+                document.getElementById('form').addEventListener('submit', submitHandler);
+            }
+            else {
+                document.body.innerHTML = `<pre>${xhr.response}</pre>`;
+            }
+        }
+    };
+    xhr.send();
+    return false;
+}
+initStopNumbers();
+document.getElementById('form').addEventListener('submit', submitHandler);
+
+"""
+
 def format_response(func):
     @wraps(func)
     def decorated_function(*args, **kwargs):
@@ -75,9 +185,9 @@ def format_response(func):
                 csv = "\n".join([headers] + data)
                 return Response(csv, mimetype=mime_type)
             elif mime_type=='text/html':
-                html = f"<html><body><table><tr><th>{headers.replace(',', '</th><th>')}</th></tr>"
-                html += "".join([f"<tr><td>{row.replace(',', '</td><td>')}</td></tr>" for row in data])
-                html += "</table></body></html>"
+                headers = f"<th>{headers.replace(',', '</th><th>')}</th>"
+                rows = "\n".join([f"<tr><td>{row.replace(',', '</td><td>')}</td></tr>" for row in data])
+                html = HTML_TEMPLATE.format(headers=headers, rows=rows, css=CSS, script=SCRIPT)
                 return Response(html, mimetype=mime_type)
     
     return decorated_function
