@@ -22,7 +22,7 @@ import waitress
 from functools import wraps
 from crontab import CronTab
 
-from gtfs import GTFS, make_base_arg_parser, static_data_ok, check_cache_info
+from gtfs import GTFS, make_base_arg_parser, static_data_ok, check_cache_info, check_cache_file
 import settings
 
 
@@ -93,13 +93,13 @@ def start_scheduled_jobs(gtfs, polling_period, download_schedule):
         rate_limit_count = 0
         next_download = datetime.datetime.utcnow() + datetime.timedelta(seconds=cron.next(default_utc=True))
         while True:
-            # exponential backoff if the last poll was rate limited
-            # TODO poll_backoff should increment and be reset
-            time.sleep(int(polling_period + polling_period * 1.5**poll_backoff))
-            now = time.time()
             logging.info("Updating from live feed.")
             rate_limit_count = gtfs.refresh_live_data()
             logging.info("Live feed updated.")
+            
+            # exponential backoff if the last poll was rate limited
+            # TODO poll_backoff should increment and be reset
+            time.sleep(int(polling_period + polling_period * 1.5**poll_backoff))
 
             # Check if the static GTFS data should be downloaded
             now = datetime.datetime.utcnow()
@@ -140,7 +140,7 @@ if __name__ == "__main__":
     # based on the download schedule
     max_seconds_old = - cron.previous(default_utc=True) 
     
-    filter_stops = None
+    filter_stops = settings.FILTER_STOPS
     if args.filter is not None:
         filter_stops = args.filter.split(',')
     
@@ -148,13 +148,13 @@ if __name__ == "__main__":
     sub_process_args = None
     if not static_data_ok(max_seconds_old):
         sub_process_args = ["python", "gtfs.py", "--download", "--rebuild_cache"]
-    elif not check_cache_info(filter_stops):
+    elif not args.redis and not check_cache_file() or not check_cache_info(filter_stops):
         logging.info(f"Rebuilding.")
         sub_process_args = ["python", "gtfs.py", "--rebuild_cache"]
     
     if sub_process_args:
-        if args.filter is not None:
-            sub_process_args += ["--filter", args.filter]
+        if filter_stops is not None:
+            sub_process_args += ["--filter", ",".join(filter_stops)]
         if args.redis is not None:
             sub_process_args += ["--redis", args.redis]
         # fork the process and wait for it.
