@@ -7,9 +7,11 @@ import time
 import logging
 import collections
 
+import settings
 import size
 
-DATA_PATH = "data/cache.pickle"
+
+DATA_PATH = settings.DATA_DIR / "cache.pickle"
 
 class Store:
     def __init__(self, redis_url:str=None, namespace_config:dict[dict[str]]={}, data_path:str=None):

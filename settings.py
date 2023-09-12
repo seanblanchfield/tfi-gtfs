@@ -1,5 +1,6 @@
 
 import os
+from pathlib import Path
 
 GTFS_STATIC_URL = os.environ.get('GTFS_STATIC_URL', "https://www.transportforireland.ie/transitData/Data/GTFS_Realtime.zip")
 GTFS_LIVE_URL = os.environ.get('GTFS_LIVE_URL', "https://api.nationaltransport.ie/gtfsr/v2/TripUpdates")
@@ -11,6 +12,7 @@ MAX_MINUTES = os.environ.get('MAX_MINUTES', 60)
 HOST = os.environ.get('HOST', 'localhost')
 PORT = os.environ.get('PORT', 7341)
 WORKERS = os.environ.get('WORKERS', 1)
+DATA_DIR = Path(os.environ.get('DATA_DIR', 'data'))
 
 # Download the static GTFS dataset every Sunday at 7am
 DOWNLOAD_SCHEDULE = os.environ.get('DOWNLOAD_SCHEDULE', '0 7 * * SUN')

@@ -12,6 +12,7 @@ import argparse
 
 from google.transit import gtfs_realtime_pb2
 
+import settings
 import store
 
 def _s2b(s):
@@ -84,7 +85,7 @@ class GTFS:
         write_cache_info(self.filter_stops)
     
     def _read_agencies(self):
-        with(open("data/agency.txt", "r")) as f:
+        with(open(settings.DATA_DIR / "agency.txt", "r")) as f:
             reader = csv.reader(f)
             # skip the first row of fieldnames
             next(reader)
@@ -93,7 +94,7 @@ class GTFS:
                 self.store.set('agency', agency_id, agency_name)
 
     def _read_routes(self):
-        with(open("data/routes.txt", "r")) as f:
+        with(open(settings.DATA_DIR / "routes.txt", "r")) as f:
             reader = csv.reader(f)
             # skip the first row of fieldnames
             next(reader)
@@ -108,7 +109,7 @@ class GTFS:
         # each service_id maps to a dict keyed on day of week
         earliest_date = datetime.date.today()
         latest_date = datetime.date(1970, 1, 1)
-        with(open("data/calendar.txt", "r")) as f:
+        with(open(settings.DATA_DIR / "calendar.txt", "r")) as f:
             reader = csv.reader(f)
             # skip the first row of fieldnames
             next(reader)
@@ -130,7 +131,7 @@ class GTFS:
         logging.info(f"Loaded calendar with start dates ranging from {earliest_date} to {latest_date}")
 
     def _read_exceptions(self):
-        with(open("data/calendar_dates.txt", "r")) as f:
+        with(open(settings.DATA_DIR / "calendar_dates.txt", "r")) as f:
             reader = csv.reader(f)
             # skip the first row of fieldnames
             next(reader)
@@ -143,7 +144,7 @@ class GTFS:
     def _read_stops(self):
         # open stops.txt and parse it as a CSV file, then return a dict
         # of stop_number -> stop_id (stop_number, as written on bus stops)
-        with(open("data/stops.txt", "r")) as f:
+        with(open(settings.DATA_DIR / "stops.txt", "r")) as f:
             reader = csv.reader(f)
             # skip the first row of fieldnames
             next(reader)
@@ -171,7 +172,7 @@ class GTFS:
         start_time = time.time()
         print("Loading stop times...", end='')
         stop_times = collections.defaultdict(dict)
-        with(open("data/stop_times.txt", "r")) as f:
+        with(open(settings.DATA_DIR / "stop_times.txt", "r")) as f:
             reader = csv.reader(f)
             # skip the first row of fieldnames
             next(reader)
@@ -223,7 +224,7 @@ class GTFS:
         # that maps trip_id -> route_id and service_id
         
         
-        with(open("data/trips.txt", "r")) as f:
+        with(open(settings.DATA_DIR / "trips.txt", "r")) as f:
             reader = csv.reader(f)
             # skip the first row of fieldnames
             next(reader)
@@ -454,17 +455,17 @@ class GTFS:
 
 
 def static_data_ok(max_seconds_old=None):
-    if os.path.exists("data/timestamp.txt"):
+    if os.path.exists(settings.DATA_DIR / "timestamp.txt"):
         if max_seconds_old is None:
             return True
         else:
-            with open("data/timestamp.txt", "r") as f:
+            with open(settings.DATA_DIR / "timestamp.txt", "r") as f:
                 timestamp = datetime.datetime.fromisoformat(f.read())
                 if datetime.datetime.utcnow() - timestamp < datetime.timedelta(seconds=max_seconds_old):
                     return True
     return False
 
-CACHE_INFO_FILE = "data/cache_info.txt"
+CACHE_INFO_FILE = settings.DATA_DIR / "cache_info.txt"
 def write_cache_info(filter_stops):
     with open(CACHE_INFO_FILE, "w") as f:
         f.write(json.dumps({
@@ -493,20 +494,20 @@ def download_static_data():
         with zipfile.ZipFile(io.BytesIO(response.read())) as zip_ref:
             # copy old .txt files in "data" directory to "data/bak"
             import shutil
-            if os.path.exists("data/bak"):
-                shutil.rmtree("data/bak")
-            os.makedirs("data/bak", exist_ok=True)
+            if os.path.exists(settings.DATA_DIR / "bak"):
+                shutil.rmtree(settings.DATA_DIR / "bak")
+            os.makedirs(settings.DATA_DIR / "bak", exist_ok=True)
             # only copy .txt files
             for file in os.listdir("data"):
                 if file.endswith(".txt"):
-                    shutil.copy(os.path.join("data", file), "data/bak/")
+                    shutil.copy(os.path.join("data", file), settings.DATA_DIR / "bak/")
             # extract the new .txt files into "data"
             zip_ref.extractall("data")
             # Ideally the feed would include a `feed_info.txt` file that has a 
             # `feed_end_date` field, but it doesn't, so we'll make our own.
             # (see https://gtfs.org/schedule/reference/#feed_infotxt for details)
             # write a file called "timestamp.txt" that contains the ISO timestamp of the last time the data was updated
-            with open("data/timestamp.txt", "w") as f:
+            with open(settings.DATA_DIR / "timestamp.txt", "w") as f:
                 f.write(datetime.datetime.utcnow().isoformat())
             # remove the cache file
             if os.path.exists(store.DATA_PATH):
