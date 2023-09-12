@@ -22,7 +22,7 @@ def _b2s(b):
     return b.decode('utf-8').split(chr(0))[0]
 
 class GTFS:
-    def __init__(self, live_url:str, api_key: str, redis_url:str=None, rebuild_cache:bool = False, filter_stops:list=None, data_path:str = None, profile_memory:bool=False):
+    def __init__(self, live_url:str, api_key: str, redis_url:str=None, rebuild_cache:bool = False, filter_stops:list=None, profile_memory:bool=False):
         # Exit with error if static data doesn't exist
         if not static_data_ok():
             logging.error("No static GTFS data found. Download it with `python gtfs.py --download` and try again.")
@@ -49,7 +49,7 @@ class GTFS:
                 'cache': True,
                 'expiry': 3600
             }
-        self.store = store.Store(redis_url=redis_url, namespace_config=namespace_config, data_path=data_path)
+        self.store = store.Store(redis_url=redis_url, namespace_config=namespace_config)
         if rebuild_cache:
             self.store.clear_cache()
 
@@ -473,7 +473,7 @@ def write_cache_info(filter_stops):
         }, indent=4))
 
 def check_cache_file():
-    return os.path.exists(store.DATA_PATH)
+    return os.path.exists(store.CACHE_FILE)
 
 def check_cache_info(filter_stops):
     if not os.path.exists(CACHE_INFO_FILE):
@@ -510,8 +510,8 @@ def download_static_data():
             with open(settings.DATA_DIR / "timestamp.txt", "w") as f:
                 f.write(datetime.datetime.utcnow().isoformat())
             # remove the cache file
-            if os.path.exists(store.DATA_PATH):
-                os.remove(store.DATA_PATH)
+            if os.path.exists(store.CACHE_FILE):
+                os.remove(store.CACHE_FILE)
     logging.info("Done.")
 
 

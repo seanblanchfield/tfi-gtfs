@@ -10,18 +10,16 @@ import collections
 import settings
 import size
 
-
-DATA_PATH = settings.DATA_DIR / "cache.pickle"
+CACHE_FILE = settings.DATA_DIR / "cache.pickle"
 
 class Store:
-    def __init__(self, redis_url:str=None, namespace_config:dict[dict[str]]={}, data_path:str=None):
+    def __init__(self, redis_url:str=None, namespace_config:dict[dict[str]]={}):
         # namespace_config is a dictionary specifying treatment of different pieces of data.
         # Each key is the prefix ending before the first '%' in keys that it should be matched against.
         # Potential values are:
         #  - cache: store the value in memory as well as redis for faster retrieval next time
         #  - expiry: set an expiry time on the key
         self.namespace_config = namespace_config
-        self.data_path = data_path or DATA_PATH
         self.data = collections.defaultdict(dict)
         if redis_url:
             logging.info("Using redis for data storage at %s", redis_url)
@@ -36,19 +34,19 @@ class Store:
         else:
             self.data = collections.defaultdict(dict)
         # Remove the cache
-        if os.path.exists(self.data_path):
-            os.remove(self.data_path)
+        if os.path.exists(CACHE_FILE):
+            os.remove(CACHE_FILE)
     
     def write_cache(self):
         if self.redis:
             self.redis.save()
         else:
-            with open(self.data_path, "wb") as f:
+            with open(CACHE_FILE, "wb") as f:
                 pickle.dump(self.data, f)
     
     def reload_cache(self):
-        if os.path.exists(self.data_path):
-            with open(self.data_path, "rb") as f:
+        if os.path.exists(CACHE_FILE):
+            with open(CACHE_FILE, "rb") as f:
                 logging.info("Loading GTFS static data from cache.")
                 self.data = pickle.load(f)
     

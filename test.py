@@ -6,26 +6,23 @@
 import unittest
 import os
 import datetime
+from pathlib import Path
 
 import gtfs
 import store
 import settings
-import size
-
 
 class TestStore(unittest.TestCase):
-    def setUp(self):
-        self.data_path = "test_data/data.pickle"
     
     def testHash(self):
-        s = store.Store(data_path=self.data_path)
+        s = store.Store()
         s.set('testnamespace', 'val1', 1)
         s.set('testnamespace', 'val2', 2)
         s.set('testnamespace', 'val3', 3)
         self.assertEqual(s.get('testnamespace', 'val2'), 2)
 
     def testSet(self):
-        s = store.Store(data_path=self.data_path)
+        s = store.Store()
         s.add('testnamespace', 1)
         s.add('testnamespace', 1)
         s.add('testnamespace', 2)
@@ -43,7 +40,10 @@ class TestStore(unittest.TestCase):
         self.assertEqual(s.cardinality('testnamespace'), 0)
     
     def testCache(self):
-        s1 = store.Store(data_path=self.data_path)
+        old_cache_file = store.CACHE_FILE
+        store.CACHE_FILE = Path("test_data/store_test.pickle")
+
+        s1 = store.Store()
         s1.set('testhash', 'val1', 1)
         s1.set('testhash', 'val2', 2)
         s1.set('testhash', 'val3', 3)
@@ -53,7 +53,7 @@ class TestStore(unittest.TestCase):
         s1.write_cache()
 
         # Initialize a second store from the same cache.
-        s2 = store.Store(data_path=self.data_path)
+        s2 = store.Store()
         self.assertEqual(s2.get('testhash', 'val2'), 2)
         self.assertTrue(s2.has('testset', 2))
 
@@ -68,10 +68,8 @@ class TestStore(unittest.TestCase):
         # should now be gone from s2
         self.assertFalse(s2.has('testset', 2))
 
-    # cleanup
-    def tearDown(self):
-        if os.path.exists(self.data_path):
-            os.remove(self.data_path)
+        os.remove(store.CACHE_FILE)
+        store.CACHE_FILE = old_cache_file
 
 
 class TestGTFS(unittest.TestCase):
@@ -79,8 +77,9 @@ class TestGTFS(unittest.TestCase):
     def setUp(self):
         # Load a cached dataset, which was created by filtering for stop 1358 (Dame St.)
         # on 11/9/2023 at 11:30am IST.
-        data_path = "test_data/cache.pickle"
-        self.gtfs = gtfs.GTFS(settings.GTFS_LIVE_URL, settings.API_KEY, data_path=data_path)
+        self.old_cache_file = store.CACHE_FILE
+        store.CACHE_FILE = Path("test_data/cache.pickle")
+        self.gtfs = gtfs.GTFS(settings.GTFS_LIVE_URL, settings.API_KEY)
         with open("test_data/test_live_response.gtfsr", 'rb') as f:
             live_data = f.read()
             self.gtfs._parse_live_data(live_data)
@@ -147,6 +146,9 @@ class TestGTFS(unittest.TestCase):
         self.assertEqual(scheduled_arrivals[5]['route'], "27")
         self.assertEqual(scheduled_arrivals[5]['scheduled_arrival'].isoformat(), "2023-09-11T11:49:00")
         self.assertIsNone(scheduled_arrivals[5]['real_time_arrival'])
+
+    def tearDown(self):
+        store.CACHE_FILE = self.old_cache_file
 
 if __name__ == '__main__':
     unittest.main()
