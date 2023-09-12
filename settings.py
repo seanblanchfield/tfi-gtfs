@@ -16,7 +16,10 @@ WORKERS = os.environ.get('WORKERS', 1)
 DOWNLOAD_SCHEDULE = os.environ.get('DOWNLOAD_SCHEDULE', '0 7 * * SUN')
 
 # set default logging level to INFO
-LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO')
+LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO').toUpperCase()
+if LOG_LEVEL not in ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']:
+    print(f"Invalid log level: {LOG_LEVEL}. Defaulting to 'INFO'.")
+    LOG_LEVEL = 'INFO'
 
 # Optimize memory usage by only storing data related to a given list of stops
 FILTER_STOPS = os.environ.get('FILTER_STOPS', None)

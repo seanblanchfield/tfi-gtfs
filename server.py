@@ -239,6 +239,7 @@ if __name__ == "__main__":
     parser.add_argument('-d', '--download', type=str, default=settings.DOWNLOAD_SCHEDULE,
                         help=f"Cron-style schedule for downloading the GTFS static data (default: {settings.DOWNLOAD_SCHEDULE})")
     args = parser.parse_args()
+    
     logging.basicConfig(level=getattr(logging, args.log_level))
 
     # Check if the static GTFS data should be downloaded
