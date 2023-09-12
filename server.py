@@ -212,7 +212,7 @@ def start_scheduled_jobs(gtfs, polling_period, download_schedule):
             now = datetime.datetime.utcnow()
             if now > next_download:
                 # Fork a subprocess to download static data and rebuild the cache
-                # using `gtfs.py --download --rebuild_cache`.
+                # using `gtfs.py --download --rebuild-cache`.
                 # This allows us to avoid incurring the memory overhead of parsing the data in this 
                 # long-lived process.
                 proc = subprocess.Popen(["python", "gtfs.py", "--download", "--rebuild-cache"])
@@ -255,10 +255,10 @@ if __name__ == "__main__":
     # prepare to fork a sub-process to download or reparse static data
     sub_process_args = None
     if not static_data_ok(max_seconds_old):
-        sub_process_args = ["python", "gtfs.py", "--download", "--rebuild_cache"]
+        sub_process_args = ["python", "gtfs.py", "--download", "--rebuild-cache"]
     elif not args.redis and not check_cache_file() or not check_cache_info(filter_stops):
         logging.info(f"Rebuilding.")
-        sub_process_args = ["python", "gtfs.py", "--rebuild_cache"]
+        sub_process_args = ["python", "gtfs.py", "--rebuild-cache"]
     
     if sub_process_args:
         if filter_stops is not None:
