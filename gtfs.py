@@ -498,11 +498,11 @@ def download_static_data():
                 shutil.rmtree(settings.DATA_DIR / "bak")
             os.makedirs(settings.DATA_DIR / "bak", exist_ok=True)
             # only copy .txt files
-            for file in os.listdir("data"):
+            for file in os.listdir(settings.DATA_DIR):
                 if file.endswith(".txt"):
-                    shutil.copy(os.path.join("data", file), settings.DATA_DIR / "bak/")
+                    shutil.copy(settings.DATA_DIR / file, settings.DATA_DIR / "bak/")
             # extract the new .txt files into "data"
-            zip_ref.extractall("data")
+            zip_ref.extractall(settings.DATA_DIR)
             # Ideally the feed would include a `feed_info.txt` file that has a 
             # `feed_end_date` field, but it doesn't, so we'll make our own.
             # (see https://gtfs.org/schedule/reference/#feed_infotxt for details)
