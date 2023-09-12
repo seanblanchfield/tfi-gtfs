@@ -20,6 +20,8 @@ LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO')
 
 # Optimize memory usage by only storing data related to a given list of stops
 FILTER_STOPS = os.environ.get('FILTER_STOPS', None)
+if FILTER_STOPS:
+    FILTER_STOPS = [stop.strip() for stop in FILTER_STOPS.split(',')]
 
 # Optionally create a `local_settings.py` file to override these settings
 # during development. This file will be ignored by git. 
