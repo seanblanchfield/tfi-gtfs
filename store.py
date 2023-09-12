@@ -81,14 +81,7 @@ class Store:
         if value is None and self.redis:
             value = self.redis.hget(namespace, key)
             if value is not None:
-                if expiry:
-                    t, value = pickle.loads(value)
-                    if expiry and now - t > expiry:
-                        # if it's expired, delete it
-                        self.redis.hdel(namespace, key)
-                        value = None
-                else:
-                    value = pickle.loads(value)
+                value = pickle.loads(value)
             # if we still don't have a value, use the default
             if value is None:
                 value = default
@@ -101,12 +94,11 @@ class Store:
     def set(self, namespace, key, value):
         config = self.namespace_config.get(namespace, {})
         expiry = config.get('expiry')
-        if expiry:
-            t = int(time.time())
-            value = (t, value)
         if self.redis:
             self.redis.hset(namespace, key, pickle.dumps(value))
         else:
+            if expiry:
+                value = (int(time.time()), value)
             self.data[namespace][key] = value
     
     # set operations including add, remove and has
