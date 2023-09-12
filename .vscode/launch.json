@@ -23,7 +23,7 @@
             "justMyCode": true,
             "args": [
                 "--download",
-                "--rebuild_cache",
+                "--rebuild-cache",
                 // "--logging",
                 // "INFO"
             ]

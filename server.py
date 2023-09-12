@@ -215,7 +215,7 @@ def start_scheduled_jobs(gtfs, polling_period, download_schedule):
                 # using `gtfs.py --download --rebuild_cache`.
                 # This allows us to avoid incurring the memory overhead of parsing the data in this 
                 # long-lived process.
-                proc = subprocess.Popen(["python", "gtfs.py", "--download", "--rebuild_cache"])
+                proc = subprocess.Popen(["python", "gtfs.py", "--download", "--rebuild-cache"])
                 proc.wait()
                 # Not reload the cache
                 gtfs.store.reload_cache()
@@ -234,9 +234,9 @@ if __name__ == "__main__":
                         help=f"Port to listen on (default: {settings.PORT})")
     parser.add_argument('-w', '--workers', type=int, default=settings.WORKERS,
                         help=f"Number of worker threads to use (default: {settings.WORKERS})")
-    parser.add_argument('-p', '--polling_period', type=int, default=settings.POLLING_PERIOD,
+    parser.add_argument('-p', '--polling-period', type=int, default=settings.POLLING_PERIOD,
                         help=f"Polling period for live GTFS feed (default: {settings.POLLING_PERIOD})")
-    parser.add_argument('-d', '--download', type=str, default=settings.DOWNLOAD_SCHEDULE,
+    parser.add_argument('--download', type=str, default=settings.DOWNLOAD_SCHEDULE,
                         help=f"Cron-style schedule for downloading the GTFS static data (default: {settings.DOWNLOAD_SCHEDULE})")
     args = parser.parse_args()
     

@@ -517,9 +517,9 @@ def download_static_data():
 def make_base_arg_parser(description):
     
     parser = argparse.ArgumentParser(description=description)
-    parser.add_argument('-l', '--live_url', type=str, default=settings.GTFS_LIVE_URL,
+    parser.add_argument('-l', '--live-url', type=str, default=settings.GTFS_LIVE_URL,
                         help=f"URL of the live GTFS feed (default: {settings.GTFS_LIVE_URL})")
-    parser.add_argument('-k', '--api_key', type=str, default=settings.API_KEY,
+    parser.add_argument('-k', '--api-key', type=str, default=settings.API_KEY,
                         help=f"Your API key for the live GTFS feed")
     parser.add_argument('-r', '--redis', type=str, default=settings.REDIS_URL,
                         help=f"URL of a redis instance to use as a data store backend (default: {settings.REDIS_URL})")
@@ -541,7 +541,7 @@ if __name__ == "__main__":
     
     parser.add_argument('--download', action='store_true', default=False,
                         help='Download and extract the static GTFS archive and exit')
-    parser.add_argument('--rebuild_cache', action='store_true',default=False,
+    parser.add_argument('--rebuild-cache', action='store_true',default=False,
                         help="Ignore cached GTFS data and load static data from scratch")
     parser.add_argument('stop_numbers', metavar='stop numbers', type=str, nargs='*',
                         help='Stop numbers to query (as shown on the bus stop)')

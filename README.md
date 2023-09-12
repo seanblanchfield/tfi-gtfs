@@ -66,7 +66,7 @@ API_KEY = "abcdefghijklmnopqrstuvwxyz1234567890"
 
 Or specify it as a command-line argument:
 ``` bash
-python3 server.py --api_key=abcdefghijklmnopqrstuvwxyz1234567890
+python3 server.py --api-key=abcdefghijklmnopqrstuvwxyz1234567890
 ```
 
 ## Running directly as a python program
@@ -125,7 +125,7 @@ You can specify arguments as follows:
 
 ``` bash
 docker run -p 7341:7341 tfi-gtfs --help
-docker run -p 7341:7341 tfi-gtfs --api_key=abcdefghijklmnopqrstuvwxyz1234567890
+docker run -p 7341:7341 tfi-gtfs --api-key=abcdefghijklmnopqrstuvwxyz1234567890
 ```
 
 You can pass a `local_settings.py` file into the container as follows:
@@ -253,7 +253,7 @@ Internally, `server.py` uses [Waitress](https://docs.pylonsproject.org/projects/
 
 Actual downloading and parsing of static schedule data is handled in sub-processes, as it is a memory-intensive operation, and we want to allow the system to reclaim that memory after the new schedule has been processed. These sub-processes are simply instances of `gtfs.py`. `server.py` will launch `gtfs.py` in this way on startup (if the current downloaded schedule is out of data, or if the current cache is out of data or invalid). It will also periodically launch `gtfs.py` from its scheduler thread, depending on the schedule in the `DOWNLOAD_SCHEDULE` setting.  
 
-`server.py` runs `gtfs.py ` with the `--rebuild_cache` argument, which causes it to re-parse the static GTFS data (which may consume in the region of 1.5 gigabytes of RAM) and write a new `data/cache.pickle` file (which may take a minute or more depending on your hardware).  After writing the pickle file, the `gtfs.py` process ends, its memory is released, and `server.py` continues execution, by loading or reloading that pickle file, which is a fast operation.
+`server.py` runs `gtfs.py ` with the `--rebuild-cache` argument, which causes it to re-parse the static GTFS data (which may consume in the region of 1.5 gigabytes of RAM) and write a new `data/cache.pickle` file (which may take a minute or more depending on your hardware).  After writing the pickle file, the `gtfs.py` process ends, its memory is released, and `server.py` continues execution, by loading or reloading that pickle file, which is a fast operation.
 
 ## Advice for high-volume deployments
 
