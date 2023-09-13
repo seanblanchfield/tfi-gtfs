@@ -40,7 +40,6 @@ For reference, the available settings are:
 - `MAX_MINUTES`. The maximum number of minutes into the future that arrivals returned in results are expected to arrive before. Defaults to 60 minutes.
 - `HOST`. The host to run the API server at. Defaults to "localhost".
 - `PORT`. The port to run the API server on. Defaults to "7341".
-- `DOWNLOAD_SCHEDULE`. A cron-style string specifying when the static data should be re-downloaded. This defaults to 7am every Sunday, i.e., `0 7 * * SUN`
 - `LOG_LEVEL`. The verbosity of output. Possible values are `DEBUG`, `INFO`, `WARN`, `ERR`. Defaults to `INFO`.
 - `FILTER_STOPS`. A list of stop numbers that should be filtered for. Information received not pertaining to these stop numbers will be discarded, yielding a significant RAM saving. Defaults to `None`, meaning that information about all stops will be kept in memory.
 
@@ -251,7 +250,7 @@ Internally, `server.py` uses [Waitress](https://docs.pylonsproject.org/projects/
 
 `server.py` also starts a long-lived thread to handle scheduled tasks like polling the live API, or redownloading the static schedule data.
 
-Actual downloading and parsing of static schedule data is handled in sub-processes, as it is a memory-intensive operation, and we want to allow the system to reclaim that memory after the new schedule has been processed. These sub-processes are simply instances of `gtfs.py`. `server.py` will launch `gtfs.py` in this way on startup (if the current downloaded schedule is out of data, or if the current cache is out of data or invalid). It will also periodically launch `gtfs.py` from its scheduler thread, depending on the schedule in the `DOWNLOAD_SCHEDULE` setting.  
+Actual downloading and parsing of static schedule data is handled in sub-processes, as it is a memory-intensive operation, and we want to allow the system to reclaim that memory after the new schedule has been processed. These sub-processes are simply instances of `gtfs.py`. `server.py` will launch `gtfs.py` in this way on startup (if the current downloaded schedule is out of date, or if the current cache is out of data or invalid). It will also check every hour if there is new static GTFS data (by performing a `HTTP HEAD` request) available and if necessary will launch `gtfs.py` to download it.  
 
 `server.py` runs `gtfs.py ` with the `--rebuild-cache` argument, which causes it to re-parse the static GTFS data (which may consume in the region of 1.5 gigabytes of RAM) and write a new `cache.pickle` file (which may take a minute or more depending on your hardware).  After writing the pickle file, the `gtfs.py` process ends, its memory is released, and `server.py` continues execution, by loading or reloading that pickle file, which is a fast operation.
 
@@ -259,7 +258,7 @@ Actual downloading and parsing of static schedule data is handled in sub-process
 
 - Workers will generally only be blocked on network I/O with redis, which is minimal. To compensate for this, consider increasing the number of requests that can be simultaneously served by `server.py` by increasing `WORKERS` to 2 or 3. 
 - To allow multiple CPU cores to be used, you will need to launch multiple instances of `server.py`. This is due to the python [Global Interpreter Lock](https://superfastpython.com/gil-removed-from-python/) (GIL). 
-- If launching multiple instances, use *Redis* to avoid duplicating all the schedule data in each process. Also, avoid duplicating work of parsing schedule data and polling the live API from each process by configuring just one of the processes with the desired `DOWNLOAD_SCHEDULE` and `POLLING_INTERVAL`, and set the `POLLING_INTERVAL` to a very high value in all the other processes (3153600000 == 100 years in seconds).
+- If launching multiple instances, use *Redis* to avoid duplicating all the schedule data in each process. Also, avoid duplicating work of parsing schedule data and polling the live API from each process by configuring just one of the processes with the desired `POLLING_INTERVAL`, and set it to a very high value in all the other processes (3153600000 == 100 years in seconds).
 
 ## Developing
 

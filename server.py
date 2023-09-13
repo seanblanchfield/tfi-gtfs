@@ -20,9 +20,8 @@ from flask.json.provider import DefaultJSONProvider
 import yaml
 import waitress
 from functools import wraps
-from crontab import CronTab
 
-from gtfs import GTFS, make_base_arg_parser, static_data_ok, check_cache_info, check_cache_file
+from gtfs import GTFS, make_base_arg_parser, check_for_new_static_data, check_cache_info, check_cache_file
 import settings
 
 
@@ -193,33 +192,26 @@ def format_response(func):
     return decorated_function
 
 
-def start_scheduled_jobs(gtfs, polling_period, download_schedule):
-    cron = CronTab(download_schedule)
-
+def start_scheduled_jobs(gtfs, polling_period):
+    next_static_download_check = datetime.datetime.utcnow() + datetime.timedelta(hours=1)
     # start a thread that refreshes live data every polling_period seconds
     def refresh():
-        next_download = datetime.datetime.utcnow() + datetime.timedelta(seconds=cron.next(default_utc=True))
         while True:
             logging.info("Updating from live feed.")
             rate_limit_count = gtfs.refresh_live_data()
             logging.info("Live feed updated.")
-            
-            # exponential backoff if the last poll was rate limited
-            # TODO poll_backoff should increment and be reset
+            # sleep for a period of time that is exponentially proportional to the rate limit count
             time.sleep(int(polling_period + polling_period * 1.5**rate_limit_count))
 
             # Check if the static GTFS data should be downloaded
-            now = datetime.datetime.utcnow()
-            if now > next_download:
-                # Fork a subprocess to download static data and rebuild the cache
-                # using `gtfs.py --download --rebuild-cache`.
-                # This allows us to avoid incurring the memory overhead of parsing the data in this 
-                # long-lived process.
-                proc = subprocess.Popen(["python", "gtfs.py", "--download", "--rebuild-cache"])
-                proc.wait()
-                # Not reload the cache
-                gtfs.store.reload_cache()
-                next_download = now + datetime.timedelta(seconds=cron.next(default_utc=True))
+            if datetime.datetime.utcnow() > next_static_download_check:
+                if check_for_new_static_data():
+                    logging.info("Downloading new static data.")
+                    proc = subprocess.Popen(["python", "gtfs.py", "--download", "--rebuild-cache"])
+                    proc.wait()
+                    # Not reload the cache
+                    gtfs.store.reload_cache()
+                next_static_download_check = datetime.datetime.utcnow() + datetime.timedelta(hours=1)
     t = threading.Thread(target=refresh)
     t.daemon = True
     t.start()
@@ -236,25 +228,17 @@ if __name__ == "__main__":
                         help=f"Number of worker threads to use (default: {settings.WORKERS})")
     parser.add_argument('-p', '--polling-period', type=int, default=settings.POLLING_PERIOD,
                         help=f"Polling period for live GTFS feed (default: {settings.POLLING_PERIOD})")
-    parser.add_argument('--download', type=str, default=settings.DOWNLOAD_SCHEDULE,
-                        help=f"Cron-style schedule for downloading the GTFS static data (default: {settings.DOWNLOAD_SCHEDULE})")
     args = parser.parse_args()
     
     logging.basicConfig(level=getattr(logging, args.log_level))
 
-    # Check if the static GTFS data should be downloaded
-    cron = CronTab(args.download)
-    # work out the max allowable days old that the static day is allowed to be,
-    # based on the download schedule
-    max_seconds_old = - cron.previous(default_utc=True) 
-    
     filter_stops = settings.FILTER_STOPS
     if args.filter is not None:
         filter_stops = args.filter.split(',')
     
     # prepare to fork a sub-process to download or reparse static data
     sub_process_args = None
-    if not static_data_ok(max_seconds_old):
+    if check_for_new_static_data():
         sub_process_args = ["python", "gtfs.py", "--download", "--rebuild-cache"]
     elif not args.redis and not check_cache_file() or not check_cache_info(filter_stops):
         logging.info(f"Rebuilding.")

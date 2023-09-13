@@ -24,8 +24,8 @@ def _b2s(b):
 class GTFS:
     def __init__(self, live_url:str, api_key: str, redis_url:str=None, rebuild_cache:bool = False, filter_stops:list=None, profile_memory:bool=False):
         # Exit with error if static data doesn't exist
-        if not static_data_ok():
-            logging.error("No static GTFS data found. Download it with `python gtfs.py --download` and try again.")
+        if check_for_new_static_data():
+            logging.error("New static GTFS data exists. Download it with `python gtfs.py --download` and try again.")
             sys.exit(1)
 
         logging.info(f"""Initializing GTFS with:
@@ -454,17 +454,6 @@ class GTFS:
         return scheduled_arrivals
 
 
-def static_data_ok(max_seconds_old=None):
-    if os.path.exists(settings.DATA_DIR / "timestamp.txt"):
-        if max_seconds_old is None:
-            return True
-        else:
-            with open(settings.DATA_DIR / "timestamp.txt", "r") as f:
-                timestamp = datetime.datetime.fromisoformat(f.read())
-                if datetime.datetime.utcnow() - timestamp < datetime.timedelta(seconds=max_seconds_old):
-                    return True
-    return False
-
 CACHE_INFO_FILE = settings.DATA_DIR / "cache_info.txt"
 def write_cache_info(filter_stops):
     with open(CACHE_INFO_FILE, "w") as f:
@@ -483,7 +472,20 @@ def check_cache_info(filter_stops):
         if cache_info.get('filter_stops') != sorted(list(filter_stops)) if filter_stops else None:
             return False
     return True
-            
+
+
+def check_for_new_static_data():
+    if os.path.exists(settings.DATA_DIR / "timestamp.txt"):
+        with open(settings.DATA_DIR / "timestamp.txt", "r") as f:
+            timestamp = datetime.datetime.fromisoformat(f.read())
+            with urllib.request.urlopen(
+                urllib.request.Request(settings.GTFS_STATIC_URL, method="HEAD")
+            ) as response:
+                last_modified_datetime = datetime.datetime.strptime(response.headers['Last-Modified'], '%a, %d %b %Y %H:%M:%S %Z')
+                if last_modified_datetime > timestamp:
+                    return True
+    return False
+
 def download_static_data():
     # download the GTFS zip file and extract it into the data directory
     import urllib.request
@@ -508,7 +510,9 @@ def download_static_data():
             # (see https://gtfs.org/schedule/reference/#feed_infotxt for details)
             # write a file called "timestamp.txt" that contains the ISO timestamp of the last time the data was updated
             with open(settings.DATA_DIR / "timestamp.txt", "w") as f:
-                f.write(datetime.datetime.utcnow().isoformat())
+                # Write the last modified date of the GTFS file to timestamp.txt
+                last_modified_datetime = datetime.datetime.strptime(response.headers['Last-Modified'], '%a, %d %b %Y %H:%M:%S %Z')
+                f.write(last_modified_datetime.isoformat())
             # remove the cache file
             if os.path.exists(store.CACHE_FILE):
                 os.remove(store.CACHE_FILE)

@@ -14,9 +14,6 @@ PORT = os.environ.get('PORT', 7341)
 WORKERS = os.environ.get('WORKERS', 1)
 DATA_DIR = Path(os.environ.get('DATA_DIR', 'data'))
 
-# Download the static GTFS dataset every Sunday at 7am
-DOWNLOAD_SCHEDULE = os.environ.get('DOWNLOAD_SCHEDULE', '0 7 * * SUN')
-
 # set default logging level to INFO
 LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO').upper()
 if LOG_LEVEL not in ['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL']:
