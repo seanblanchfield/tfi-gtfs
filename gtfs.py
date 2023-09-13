@@ -210,14 +210,14 @@ class GTFS:
                 for trip_id in trip_ids
             ])
 
-    def _pack_trip(self, route_id, service_id):
+    def _pack_trip(self, route_id, service_id, headsign):
         # byte pack the data to save space
-        return struct.pack('12s4s', _s2b(route_id), _s2b(service_id))
+        return struct.pack('12s4s25s', _s2b(route_id), _s2b(service_id), _s2b(headsign))
 
     def _unpack_trip(self, trip_buffer):
         # unpack the data from the bit packed format
-        route_id, service_id = struct.unpack('12s4s', trip_buffer)
-        return _b2s(route_id), _b2s(service_id)
+        route_id, service_id, headsign = struct.unpack('12s4s25s', trip_buffer)
+        return _b2s(route_id), _b2s(service_id), _b2s(headsign)
 
     def _read_trips(self) -> dict:
         # open trips.txt and parse it as a CSV file, then return a dict
@@ -232,15 +232,16 @@ class GTFS:
                 route_id = row[0]
                 service_id = row[1]
                 trip_id = row[2]
+                headsign = row[3]
                 if self.filter_trips and trip_id not in self.filter_trips:
                     continue
-                self.store.set('trip', trip_id, self._pack_trip(route_id, service_id))
+                self.store.set('trip', trip_id, self._pack_trip(route_id, service_id, headsign))
 
     def get_trip_info(self, trip_id):
         try:
             packed_trip = self.store.get('trip', trip_id)
             if packed_trip:
-                route_id, service_id = self._unpack_trip(packed_trip)
+                route_id, service_id, headsign = self._unpack_trip(packed_trip)
                 route_info = self.store.get('route', route_id)
                 if route_info is None:
                     logging.warning(f"Unrecognised route_id {route_id} in trip {trip_id}")
@@ -249,6 +250,7 @@ class GTFS:
                 calendar_info = self.store.get('service', service_id)
                 return {
                     'route': route_info['name'],
+                    'headsign': headsign,
                     'agency': agency_info,
                     'service_id': service_id,
                     'start_date': calendar_info['start_date'],
@@ -432,6 +434,7 @@ class GTFS:
                     arrival = {
                         'route': trip_info['route'],
                         'agency': trip_info['agency'],
+                        'headsign': trip_info['headsign'],
                         'scheduled_arrival': arrival_datetime,
                         'real_time_arrival': arrival_datetime + datetime.timedelta(seconds=delay) if delay is not None else None,
                     }

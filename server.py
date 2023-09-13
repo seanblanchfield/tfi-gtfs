@@ -173,9 +173,9 @@ def format_response(func):
                 if isinstance(d, datetime.datetime):
                     return d.isoformat()
                 return ""
-            headers = ",".join(["stop", "route", "agency", "scheduled_arrival", "estimated_arrival"])
+            headers = ",".join(["stop", "route", "headsign", "agency", "scheduled_arrival", "estimated_arrival"])
             data = [
-                ", ".join([stop_number, stop['route'], stop['agency'], to_iso_date(stop['scheduled_arrival']), to_iso_date(stop['real_time_arrival'])])
+                ", ".join([stop_number, stop['route'], stop['headsign'], stop['agency'],  to_iso_date(stop['scheduled_arrival']), to_iso_date(stop['real_time_arrival'])])
                 for stop_number, stops in response_data.items() 
                 for stop in stops
             ]
@@ -193,9 +193,9 @@ def format_response(func):
 
 
 def start_scheduled_jobs(gtfs, polling_period):
-    next_static_download_check = datetime.datetime.utcnow() + datetime.timedelta(hours=1)
     # start a thread that refreshes live data every polling_period seconds
     def refresh():
+        next_static_download_check = datetime.datetime.utcnow() + datetime.timedelta(hours=1)
         while True:
             logging.info("Updating from live feed.")
             rate_limit_count = gtfs.refresh_live_data()
@@ -262,7 +262,7 @@ if __name__ == "__main__":
         filter_stops=filter_stops,
         profile_memory=args.profile
     )
-    start_scheduled_jobs(gtfs, args.polling_period, args.download)
+    start_scheduled_jobs(gtfs, args.polling_period)
 
     # set up the API endpoint
     @app.route('/api/v1/arrivals')
