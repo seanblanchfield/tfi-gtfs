@@ -1,6 +1,9 @@
 ARG BUILD_FROM=redis:alpine
 FROM $BUILD_FROM
 
+ARG DATA_DIR=data
+ENV DATA_DIR=${DATA_DIR}
+
 # Install requirements for add-on
 RUN \
   apk add --no-cache \

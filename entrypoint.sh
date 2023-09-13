@@ -1,19 +1,22 @@
 #!/bin/sh
 
 # Start the first process
-redis-server --daemonize yes
+redis-server --dir $DATA_DIR &
+REDIS_PID=$!
 
 cd /app
 cmd="python3 server.py --host 0.0.0.0 --redis redis://localhost:6379 $@"
 echo $cmd
-$cmd
+$cmd &
 PID=$!
 
 clean_up() {
     EXIT_STATUS=$!
     # Remove our trapped signals.
     trap - TERM
-    echo "Forwarding signal TERM to $PID."
+    echo "Forwarding signal TERM to redis server $REDIS_PID."
+    kill -TERM $REDIS_PID
+    echo "Forwarding signal TERM to python server $PID."
     kill -TERM $PID
     echo "Waiting on $PID to exit."
     wait $PID
