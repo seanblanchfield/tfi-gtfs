@@ -454,6 +454,7 @@ class GTFS:
             agency_name = self.store.get('agency', route_info['agency'])
             scheduled_arrivals.append({
                 'route': route_info['name'],
+                'headsign': "",
                 'agency': agency_name,
                 'scheduled_arrival': added_trip['arrival'],
                 'real_time_arrival': added_trip['arrival'],
@@ -483,7 +484,9 @@ def check_cache_info(filter_stops):
 
 
 def check_for_new_static_data():
-    if os.path.exists(settings.DATA_DIR / "timestamp.txt"):
+    if not os.path.exists(settings.DATA_DIR / "timestamp.txt"):
+        return True
+    else:
         with open(settings.DATA_DIR / "timestamp.txt", "r") as f:
             timestamp = datetime.datetime.fromisoformat(f.read())
             with urllib.request.urlopen(
