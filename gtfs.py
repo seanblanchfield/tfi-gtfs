@@ -150,9 +150,11 @@ class GTFS:
             next(reader)
             for row in reader:
                 stop_id = row[0]
+                stop_name = row[2]
                 # some stops (in Northern Ireland) don't have a stop code. Use the stop_id instead.
                 stop_number = row[1] or row[0]
                 self.store.set('stop', stop_id, stop_number)
+                self.store.set('stop_names', stop_number, stop_name)
                 self.store.add('stop_numbers', stop_number)
     
     def _pack_stop_data(self, trip_id, arrival_hour, arrival_min, arrival_sec, stop_sequence):
@@ -386,6 +388,9 @@ class GTFS:
 
     def is_valid_stop_number(self, stop_number: str):
         return self.store.has('stop_numbers', stop_number)
+
+    def get_stop_name(self, stop_number: str):
+        return self.store.get('stop_names', stop_number)
     
     def get_scheduled_arrivals(self, stop_number: str, now: datetime, max_wait: datetime.timedelta):
         # get all the scheduled arrivals at a given stop_id

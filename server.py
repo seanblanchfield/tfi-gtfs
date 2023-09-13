@@ -173,11 +173,11 @@ def format_response(func):
                 if isinstance(d, datetime.datetime):
                     return d.isoformat()
                 return ""
-            headers = ",".join(["stop", "route", "headsign", "agency", "scheduled_arrival", "estimated_arrival"])
+            headers = ",".join(["stop", "stop_name", "route", "headsign", "agency", "scheduled_arrival", "estimated_arrival"])
             data = [
-                ", ".join([stop_number, stop['route'], stop['headsign'], stop['agency'],  to_iso_date(stop['scheduled_arrival']), to_iso_date(stop['real_time_arrival'])])
-                for stop_number, stops in response_data.items() 
-                for stop in stops
+                ", ".join([stop_number, stop_data['stop_name'], stop['route'], stop['headsign'], stop['agency'],  to_iso_date(stop['scheduled_arrival']), to_iso_date(stop['real_time_arrival'])])
+                for stop_number, stop_data in response_data.items() 
+                for stop in stop_data['arrivals']
             ]
             # convert the list of dicts into a CSV string
             if mime_type in ('text/csv', 'text/plain'):
@@ -273,7 +273,10 @@ if __name__ == "__main__":
         arrivals = {}
         for stop_number in stop_numbers:
             if gtfs.is_valid_stop_number(stop_number):
-                arrivals[stop_number] = gtfs.get_scheduled_arrivals(stop_number, now, datetime.timedelta(minutes=args.minutes))
+                arrivals[stop_number] = {
+                    'stop_name': gtfs.get_stop_name(stop_number),
+                    'arrivals': gtfs.get_scheduled_arrivals(stop_number, now, datetime.timedelta(minutes=args.minutes))
+                }
         return arrivals
     
     # start server
