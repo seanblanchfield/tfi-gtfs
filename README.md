@@ -212,8 +212,8 @@ In a comparitive test on a 64 bit laptop, with all stops loaded I observed the f
 for [GTFS-Upcoming](https://github.com/seanrees/gtfs-upcoming) are also given).
 | Test             | Python data  | Python Total  | Redis data   | Redis Total  |
 |---               |---           | ---           | ---          |   ---        |
-|  Without redis   | 384MB        | 520MB         | N/A          |   N/A        |
-|  With redis      | 1MB          | 39MB          | 152MB        |   155MB      |
+|  Without redis   | 317MB        | 439MB         | N/A          |   N/A        |
+|  With redis      | 1MB          | 39MB          | 131MB        |   141MB      |
 |  GTFS-Upcoming   | 7,909MB      | 8,687MB       | N/A          |   N/A        |
 
 
@@ -223,16 +223,16 @@ If `FILTER_STOPS` is supplied, data that does not pertain to the given stops wil
 
 | Test             | Python data    | Python Total  | Redis data   | Redis Total  |
 |---               |---             | ---           | ---          |   ---        |
-|  Without redis   | 3.6MB          | 41MB          | N/A          |   N/A        |
-|  With redis      | 1MB            | 38.9MB        | 2.8MB        |   6.9MB      |
+|  Without redis   | 3.4MB          | 42.7MB        | N/A          |   N/A        |
+|  With redis      | 1MB            | 39.9MB        | 3.4MB        |   13MB      |
 |  GTFS-Upcoming   | 71MB           | 123MB         | N/A          |    N/A       |
 
 
 **Conclusions**:
 
-- We can subtract the "data" size from the "total" to get a rough estimate of the base memory consumed by each process. In this way, we see that the base memory required by **Redis seems to be only about 3 MB, while `server.py` requires about 38 MB**.
+- We can subtract the "data" size from the "total" to get a rough estimate of the base memory consumed by each process. In this way, we see that the base memory required by **Redis seems to be less than 10 MB, while `server.py` requires about 38 MB**.
 
-- Broadly speaking, we see that storing all the data in **python is about 2.7 times less space-efficient than storing it in Redis** (436 MB vs 159 MB).
+- Broadly speaking, we see that storing all the data in **python is about 2.4 times less space-efficient than storing it in Redis**.
 
 - Storing data for one or two stops (using the `FILTER_STOPS` option) results in negligible memory use beyond the base requirements of the program, regardless of whether redis is used or not.
 

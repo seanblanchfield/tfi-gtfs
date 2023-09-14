@@ -568,6 +568,9 @@ if __name__ == "__main__":
     if args.download:
         download_static_data()
     
+    if not args.api_key:
+        logging.error("No API key provided. Exiting.")
+        sys.exit(1)
     filter_stops = settings.FILTER_STOPS
     if args.filter is not None:
         filter_stops = args.filter.split(',')
