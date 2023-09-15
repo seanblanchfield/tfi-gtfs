@@ -65,16 +65,21 @@ class Store:
         config = self.namespace_config.get(namespace, {})
         now = int(time.time())
         expiry = config.get('expiry')
-        
+        is_cachable = config.get('cache')
+
         value = None
         cached_item = self.data.get(namespace, {}).get(key)
         if cached_item:
-            if expiry:
+            if is_cachable:
                 t, cached_value = cached_item
-                if expiry is None or now - t < expiry:
-                    value = cached_value
-                else:
-                    del self.data[namespace][key]
+                try:
+                    if expiry is None or now - t < expiry:
+                        value = cached_value
+                    else:
+                        del self.data[namespace][key]
+                except TypeError:
+                    # Try to catch an infrequent cache where now or t is a string
+                    logging.error(f"Error unpacking cached item ns: {namespace}: {key} = {cached_item}. Now ({type(now)})={now}, t ({type(t)}))={t}", namespace, key, cached_item)
             else:
                 value = cached_item
         
@@ -86,18 +91,18 @@ class Store:
             if value is None:
                 value = default
             # cache the value if we're supposed to
-            if config.get('cache'):
+            if is_cachable:
                 self.data[namespace][key] = (now, value)
         
         return value if value is not None else default
 
     def set(self, namespace, key, value):
         config = self.namespace_config.get(namespace, {})
-        expiry = config.get('expiry')
+        is_cachable = config.get('is_cachable')
         if self.redis:
             self.redis.hset(namespace, key, pickle.dumps(value))
         else:
-            if expiry:
+            if is_cachable:
                 value = (int(time.time()), value)
             self.data[namespace][key] = value
     
