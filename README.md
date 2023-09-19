@@ -5,13 +5,13 @@ This project is inspired by [Sean Rees's GTFS Upcoming](https://github.com/seanr
 
 ## Background
 
-[National Transport Authority (NTA)](https://www.nationaltransport.ie/)) of Ireland operates a public-transport brand called [Transport for Ireland](https://www.transportforireland.ie/) or *TFI*, which pulls together all information related to public transport. From the point of view of the average commuter, *TFI* is in charge of buses and trains. The NTA previously provided a real-time passenger information (RTPI) REST API that allowed the status of routes serving particular stops to be easily queried, but this API was discontinued in September 2020 ([perhaps due to scalability issues and breaches of fair use](https://data.gov.ie/blog/update-on-availability-of-the-real-time-travel-information-api)), and was replaced with a [GTFS-R API](https://www.transportforireland.ie/news/new-transport-data-feed-for-app-developers-now-online/).  *General Transit Feed Specification* (GTFS) is a protocol designed by Google to allow transit operators to communicate static and real-time schedule information to Google Maps. The static data consists of a zip file at a well-known URL that containing metadata files describing operators, routes, stops, and the schedule. The real-time part is an API endpoint that can be queried for a list of estimated arrival delays for all vehicles that are on the road/tracks. This real-time feed needs to be interpreted inconjunction with the metadata from the static zip file.  This architecture seeems convenient for Google, who are interested in mass-syncing all available information. However, it is inconvenient if you are an average user who has a specific query about upcoming arrivals at a particular stop or station.  This project bridges that gap.
+[National Transport Authority (NTA)](https://www.nationaltransport.ie/)) of Ireland operates a public-transport brand called [Transport for Ireland](https://www.transportforireland.ie/) or *TFI*, which pulls together all information related to public transport. From the point of view of the average commuter, *TFI* is in charge of buses and trains. The NTA previously provided a real-time passenger information (RTPI) REST API that allowed the status of routes serving particular stops to be easily queried, but this API was discontinued in September 2020 ([perhaps due to scalability issues and breaches of fair use](https://data.gov.ie/blog/update-on-availability-of-the-real-time-travel-information-api)), and was replaced with a [GTFS-R API](https://www.transportforireland.ie/news/new-transport-data-feed-for-app-developers-now-online/).  *General Transit Feed Specification* (GTFS) is a protocol designed by Google to allow transit operators to communicate static and real-time schedule information to Google Maps. The static data consists of a zip file at a well-known URL that containing metadata files describing operators, routes, stops, and the schedule. The real-time part is an API endpoint that returns the status of the entire fleet of vehicles that are currently on the road/tracks (including estimated delays). This real-time feed needs to be interpreted in conjunction with the metadata from the static zip file.  This architecture seems convenient for Google, who are interested in mass-syncing all available information. However, it is inconvenient if you are an average user who has a specific query about upcoming arrivals at a particular stop or station.  This project bridges that gap.
 
 ## How it works
 
-This project is a GTFS-R client, which reads all static and realtime transport fleet information into RAM. It then provides a simple REST API to allow information about upcoming scheduled and real-time arrivals at any particular stop.
+This project is a GTFS-R client, which reads all static and realtime transport fleet information into RAM. It then provides a simple REST API to allow querying of upcoming scheduled and real-time arrivals at any particular stop.
 
-On startup, it downloads the static data and parses it into memory (by default, it will re-download this schedule every week). It also periodically queries the real-time API, and stores received information about arrival delays, cancelations and additions into memory (by default, it will do this every minute). The in-memory information can then be efficiently queried to return a list of all scheduled and real-time arrivals at any particular stop. 
+On startup, it downloads the static data and parses it into memory (by default, it will re-download this whenever the data is updated). It also periodically queries the real-time API, and stores received information about arrival delays, cancelations and additions into memory (by default, it will do this every minute). The in-memory information can then be efficiently queried to return a list of all scheduled and real-time arrivals at any particular stop. 
 
 ## How to Run
 
@@ -141,7 +141,7 @@ This project is also available as a *Home Assistant* addon. Visit my [Home Assis
 ## Querying the server
 The API is hosted at the path `/api/v1/arrivals`. You can query it by supplying one or more "stop" query parameters. 
 
-For example, if the server is running on localhost, visit [http://localhost:7341/api/v1/arrivals?stop=1358] in your web browser to receive a table of upcoming arrivals at stop `1358`.
+For example, if the server is running on localhost, visit [http://localhost:7341/api/v1/arrivals?stop=1358](http://localhost:7341/api/v1/arrivals?stop=1358) in your web browser to receive a table of upcoming arrivals at stop `1358`.
 
 
 Alternatively, using `cURL`, run the following command:
@@ -177,7 +177,7 @@ If you visit the URL from your web browser, you web browser will automatically s
 
 ## Running with Redis
 
-If you are running this project directly as python and memory consumption is an issue, you can use the `REDIS_URL` option to specify an external [redis](https://redis.io/) instance to use as a more efficient data store. Redis is a highly-performance distributed data store written in C, and has very efficient storage. If you don't have a *redis* instance, you can start one using Docker as follows:
+If you are running this project directly as python and memory consumption is an issue, you can use the `REDIS_URL` option to specify an external [redis](https://redis.io/) instance to use as a more efficient data store. Redis is a highly-performant distributed data store written in C, and has very efficient storage. If you don't have a *redis* instance, you can start one using Docker as follows:
 
 ``` bash
 docker run --name redis-gtfs -p 127.0.0.1:6379:6379/tcp  -d redis
@@ -281,7 +281,7 @@ Static GTFS data is downloaded to the `/data` directory.
 
 ### Running and Debugging
 
-The following tips are written based on using *VSCode*, but you should be able to adapt them to other IDEs. 
+The following tips are based on *VSCode*, but you should be able to adapt them to other IDEs. 
 
 Make sure you have set up the virtual environment as follows:
 
@@ -308,3 +308,8 @@ If you want to debug with redis, you will need a redis instance. See the "Runnin
 Further development and PRs are very welcome. 
 
 ### Testing
+
+Unit tests are provided in `tests.py`, with test fixtures in `test_data/`. Run tests as follows:
+``` bash
+python3 -m unittest test
+```
