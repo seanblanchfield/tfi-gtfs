@@ -56,7 +56,7 @@ HTML_TEMPLATE = """
             <option value="text/csv">CSV</option>
             <option value="text/plain">Plain</option>
         </select>
-        <form action="/api/v1/arrivals" method="get" id="form">
+        <form action="" method="get" id="form">
             <input type="text" name="stop" id="stop1" placeholder="Stop number" />
             <input type="text" name="stop" id="stop2" placeholder="Stop number" />
             <button type="submit">Submit</button>
@@ -278,6 +278,21 @@ if __name__ == "__main__":
                     'arrivals': gtfs.get_scheduled_arrivals(stop_number, now, datetime.timedelta(minutes=args.minutes))
                 }
         return arrivals
+    
+    # serve a basic static page with a link to /api/v1/arrivals at the root
+    @app.route('/')
+    def index():
+        return """
+        <html>
+            <head>
+                <title>GTFS API</title>
+            </head>
+            <body>
+                <h1>GTFS API</h1>
+                <p>See <a href="api/v1/arrivals">api/v1/arrivals</a> for the API documentation.</p>
+            </body>
+        </html>
+        """
     
     # start server
     print("Waiting for requests...")
