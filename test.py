@@ -20,6 +20,8 @@ class TestStore(unittest.TestCase):
         s.set('testnamespace', 'val2', 2)
         s.set('testnamespace', 'val3', 3)
         self.assertEqual(s.get('testnamespace', 'val2'), 2)
+        s.delete('testnamespace', 'val2')
+        self.assertIsNone(s.get('testnamespace', 'val2'))
 
     def testSet(self):
         s = store.Store()

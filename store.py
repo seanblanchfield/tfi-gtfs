@@ -106,6 +106,14 @@ class Store:
                 value = (int(time.time()), value)
             self.data[namespace][key] = value
     
+    def delete(self, namespace, key):
+        if self.redis:
+            self.redis.hdel(namespace, key)
+        else:
+            ns = self.data.get(namespace, {})
+            if key in ns:
+                del ns[key]
+    
     # set operations including add, remove and has
     def add(self, namespace, value):
         config = self.namespace_config.get(namespace, {})

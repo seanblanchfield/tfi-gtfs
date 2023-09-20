@@ -299,18 +299,19 @@ class GTFS:
                         if stop_time_update.arrival.time:
                             num_added += 1
                             live_additions = self.store.get('live_additions', stop_number, [])
-                            live_additions.append({
+                            new_addition = {
                                 'route_id': entity.trip_update.trip.route_id,
                                 'arrival': datetime.datetime.fromtimestamp(stop_time_update.arrival.time),
                                 'timestamp': timestamp
-                            })
+                            }
+                            # Prune any previously added copies of this addition and any very old items from the live_additions list.
+                            live_additions = [item for item in live_additions if item['timestamp'] > timestamp - 3600 and item['route_id'] != new_addition['route_id'] and item['arrival'] > new_addition['arrival']]
+                            live_additions.append(new_addition)
                             self.store.set('live_additions', stop_number, live_additions)
                     elif entity.trip_update.trip.schedule_relationship == TRIP_CANCELLED:
                         num_cancelled += 1
-                        self.store.set('live_cancelations', trip_id, True)
-                        self._live_data['cancelled'][trip_id] = {
-                            'timestamp': timestamp
-                        }
+                        self.store.set('live_cancelations', trip_id, timestamp)
+                    
                     elif entity.trip_update.trip.schedule_relationship == TRIP_SCHEDULED:
                         trip_info = self.get_trip_info(trip_id)
                         if trip_info is None:
@@ -438,8 +439,15 @@ class GTFS:
                 removed = calendar_exception == 2
                 if added or service_is_scheduled and not removed:
                     delay = self._get_live_delay(trip_id, stop_sequence)
-                    if self.store.has('live_cancelations', trip_id):
-                        continue
+                    cancelled_timestamp = self.store.get('live_cancelations', trip_id)
+                    if cancelled_timestamp:
+                        # if the trip has been cancelled in the last 24 hours, skip it
+                        if cancelled_timestamp > now.timestamp() - 3600 * 24:
+                            continue
+                        else:
+                            # clean it up if it's older than 24 hours
+                            self.store.delete('live_cancelations', trip_id)
+                    
                     # We expect this arrival.
                     arrival = {
                         'route': trip_info['route'],
@@ -455,6 +463,9 @@ class GTFS:
         
         # add any added trips
         for added_trip in self.store.get('live_additions', stop_number, []):
+            # if the trip is in the past, skip it
+            if added_trip['arrival'] < now:
+                continue
             route_info = self.store.get('route', added_trip['route_id'])
             agency_name = self.store.get('agency', route_info['agency'])
             scheduled_arrivals.append({
