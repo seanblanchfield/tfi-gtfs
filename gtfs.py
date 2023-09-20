@@ -353,10 +353,15 @@ class GTFS:
             f.close()
             self.rate_limit_count = 0
         except urllib.error.HTTPError as e:
-            logging.error(f"Error fetching real time updates: {e}")
             # so long as we get rate-limited, back off exponentially
             if e.code == 429:
+                logging.warning(f"Hit rate limit {self.rate_limit_count} times. Backing off.")
                 self.rate_limit_count += 1
+            else:
+                logging.error(f"Error fetching real time updates: {e}")
+        except urllib.error.URLError as e:
+            logging.error(f"Error fetching real time updates: {e}")
+
         return self.rate_limit_count
     
 
