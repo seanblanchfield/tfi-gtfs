@@ -192,7 +192,7 @@ def format_response(func):
     return decorated_function
 
 
-def start_scheduled_jobs(gtfs, polling_period):
+def start_scheduled_jobs(gtfs, polling_period, extra_sub_process_args: list):
     # start a thread that refreshes live data every polling_period seconds
     def refresh():
         next_static_download_check = datetime.datetime.utcnow() + datetime.timedelta(hours=1)
@@ -207,7 +207,8 @@ def start_scheduled_jobs(gtfs, polling_period):
             if datetime.datetime.utcnow() > next_static_download_check:
                 if check_for_new_static_data():
                     logging.info("Downloading new static data.")
-                    proc = subprocess.Popen(["python", "gtfs.py", "--download", "--rebuild-cache"])
+                    sub_process_args = ["python", "gtfs.py", "--download", "--rebuild-cache"] + extra_sub_process_args
+                    proc = subprocess.Popen(sub_process_args)
                     proc.wait()
                     # Not reload the cache
                     gtfs.store.reload_cache()
@@ -244,14 +245,15 @@ if __name__ == "__main__":
         logging.info(f"Rebuilding.")
         sub_process_args = ["python", "gtfs.py", "--rebuild-cache"]
     
+    extra_sub_process_args = []
     if sub_process_args:
         if filter_stops is not None:
-            sub_process_args += ["--filter", ",".join(filter_stops)]
+            extra_sub_process_args += ["--filter", ",".join(filter_stops)]
         if args.redis is not None:
-            sub_process_args += ["--redis", args.redis]
+            extra_sub_process_args += ["--redis", args.redis]
         # fork the process and wait for it.
         # forking allows us to avoid incurring the memory overhead of parsing the data in this
-        proc = subprocess.Popen(sub_process_args)
+        proc = subprocess.Popen(sub_process_args + extra_sub_process_args)
         proc.wait()
     
     # set up the GTFS object
@@ -262,7 +264,7 @@ if __name__ == "__main__":
         filter_stops=filter_stops,
         profile_memory=args.profile
     )
-    start_scheduled_jobs(gtfs, args.polling_period)
+    start_scheduled_jobs(gtfs, args.polling_period, extra_sub_process_args)
 
     # set up the API endpoint
     @app.route('/api/v1/arrivals')

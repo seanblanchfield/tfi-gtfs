@@ -98,10 +98,10 @@ class Store:
 
     def set(self, namespace, key, value):
         config = self.namespace_config.get(namespace, {})
-        is_cachable = config.get('cache')
         if self.redis:
             self.redis.hset(namespace, key, pickle.dumps(value))
         else:
+            is_cachable = config.get('cache')
             if is_cachable:
                 value = (int(time.time()), value)
             self.data[namespace][key] = value
