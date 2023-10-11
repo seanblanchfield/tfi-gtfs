@@ -339,7 +339,7 @@ class GTFS:
 
                 if len(trip_delays):
                     self.store.set('live_delays', trip_id, trip_delays)
-        logging.info(f"Got {num_updates} trip updates, {num_unrecognised_trips} unrecognised trips, {num_added} added trips, {num_cancelled} cancelled trips")
+        logging.debug(f"Got {num_updates} trip updates, {num_unrecognised_trips} unrecognised trips, {num_added} added trips, {num_cancelled} cancelled trips")
     
     def refresh_live_data(self):
         now = time.time()

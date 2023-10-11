@@ -195,11 +195,12 @@ def format_response(func):
 def start_scheduled_jobs(gtfs, polling_period, extra_sub_process_args: list):
     # start a thread that refreshes live data every polling_period seconds
     def refresh():
-        next_static_download_check = datetime.datetime.utcnow() + datetime.timedelta(hours=1)
+        check_delay = datetime.timedelta(hours=1)
+        next_static_download_check = datetime.datetime.utcnow() + check_delay
         while True:
-            logging.info("Updating from live feed.")
+            logging.debug("Updating from live feed.")
             rate_limit_count = gtfs.refresh_live_data()
-            logging.info("Live feed updated.")
+            logging.debug("Live feed updated.")
             # sleep for a period of time that is exponentially proportional to the rate limit count
             time.sleep(int(polling_period + polling_period * 1.5**rate_limit_count))
 
@@ -212,7 +213,7 @@ def start_scheduled_jobs(gtfs, polling_period, extra_sub_process_args: list):
                     proc.wait()
                     # Not reload the cache
                     gtfs.store.reload_cache()
-                next_static_download_check = datetime.datetime.utcnow() + datetime.timedelta(hours=1)
+                next_static_download_check = datetime.datetime.utcnow() + check_delay
     t = threading.Thread(target=refresh)
     t.daemon = True
     t.start()
@@ -246,11 +247,12 @@ if __name__ == "__main__":
         sub_process_args = ["python", "gtfs.py", "--rebuild-cache"]
     
     extra_sub_process_args = []
+    if filter_stops is not None:
+        extra_sub_process_args += ["--filter", ",".join(filter_stops)]
+    if args.redis is not None:
+        extra_sub_process_args += ["--redis", args.redis]
+    
     if sub_process_args:
-        if filter_stops is not None:
-            extra_sub_process_args += ["--filter", ",".join(filter_stops)]
-        if args.redis is not None:
-            extra_sub_process_args += ["--redis", args.redis]
         # fork the process and wait for it.
         # forking allows us to avoid incurring the memory overhead of parsing the data in this
         proc = subprocess.Popen(sub_process_args + extra_sub_process_args)

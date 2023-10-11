@@ -12,6 +12,7 @@
             "console": "integratedTerminal",
             "justMyCode": true,
             "args": [
+                "--redis", "redis://localhost:6379"
             ]
         },
         {
