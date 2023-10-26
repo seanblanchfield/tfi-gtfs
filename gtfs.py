@@ -505,12 +505,16 @@ def check_for_new_static_data():
     else:
         with open(settings.DATA_DIR / "timestamp.txt", "r") as f:
             timestamp = datetime.datetime.fromisoformat(f.read())
-            with urllib.request.urlopen(
-                urllib.request.Request(settings.GTFS_STATIC_URL, method="HEAD")
-            ) as response:
-                last_modified_datetime = datetime.datetime.strptime(response.headers['Last-Modified'], '%a, %d %b %Y %H:%M:%S %Z')
-                if last_modified_datetime > timestamp:
-                    return True
+            try:
+                with urllib.request.urlopen(
+                    urllib.request.Request(settings.GTFS_STATIC_URL, method="HEAD")
+                ) as response:
+                    last_modified_datetime = datetime.datetime.strptime(response.headers['Last-Modified'], '%a, %d %b %Y %H:%M:%S %Z')
+                    if last_modified_datetime > timestamp:
+                        return True
+            except urllib.error.URLError as e:
+                logging.error(f"Error checking for new static data: {e}")
+            
     return False
 
 def download_static_data():
@@ -518,32 +522,35 @@ def download_static_data():
     import urllib.request
     import zipfile
     import io
-    logging.info(f"Downloading GTFS data from {settings.GTFS_STATIC_URL}")
-    with urllib.request.urlopen(settings.GTFS_STATIC_URL) as response:
-        with zipfile.ZipFile(io.BytesIO(response.read())) as zip_ref:
-            # copy old .txt files in "data" directory to "data/bak"
-            import shutil
-            if os.path.exists(settings.DATA_DIR / "bak"):
-                shutil.rmtree(settings.DATA_DIR / "bak")
-            os.makedirs(settings.DATA_DIR / "bak", exist_ok=True)
-            # only copy .txt files
-            for file in os.listdir(settings.DATA_DIR):
-                if file.endswith(".txt"):
-                    shutil.copy(settings.DATA_DIR / file, settings.DATA_DIR / "bak/")
-            # extract the new .txt files into "data"
-            zip_ref.extractall(settings.DATA_DIR)
-            # Ideally the feed would include a `feed_info.txt` file that has a 
-            # `feed_end_date` field, but it doesn't, so we'll make our own.
-            # (see https://gtfs.org/schedule/reference/#feed_infotxt for details)
-            # write a file called "timestamp.txt" that contains the ISO timestamp of the last time the data was updated
-            with open(settings.DATA_DIR / "timestamp.txt", "w") as f:
-                # Write the last modified date of the GTFS file to timestamp.txt
-                last_modified_datetime = datetime.datetime.strptime(response.headers['Last-Modified'], '%a, %d %b %Y %H:%M:%S %Z')
-                f.write(last_modified_datetime.isoformat())
-            # remove the cache file
-            if os.path.exists(store.CACHE_FILE):
-                os.remove(store.CACHE_FILE)
-    logging.info("Done.")
+    try:
+        logging.info(f"Downloading static GTFS data from {settings.GTFS_STATIC_URL}")
+        with urllib.request.urlopen(settings.GTFS_STATIC_URL) as response:
+            with zipfile.ZipFile(io.BytesIO(response.read())) as zip_ref:
+                # copy old .txt files in "data" directory to "data/bak"
+                import shutil
+                if os.path.exists(settings.DATA_DIR / "bak"):
+                    shutil.rmtree(settings.DATA_DIR / "bak")
+                os.makedirs(settings.DATA_DIR / "bak", exist_ok=True)
+                # only copy .txt files
+                for file in os.listdir(settings.DATA_DIR):
+                    if file.endswith(".txt"):
+                        shutil.copy(settings.DATA_DIR / file, settings.DATA_DIR / "bak/")
+                # extract the new .txt files into "data"
+                zip_ref.extractall(settings.DATA_DIR)
+                # Ideally the feed would include a `feed_info.txt` file that has a 
+                # `feed_end_date` field, but it doesn't, so we'll make our own.
+                # (see https://gtfs.org/schedule/reference/#feed_infotxt for details)
+                # write a file called "timestamp.txt" that contains the ISO timestamp of the last time the data was updated
+                with open(settings.DATA_DIR / "timestamp.txt", "w") as f:
+                    # Write the last modified date of the GTFS file to timestamp.txt
+                    last_modified_datetime = datetime.datetime.strptime(response.headers['Last-Modified'], '%a, %d %b %Y %H:%M:%S %Z')
+                    f.write(last_modified_datetime.isoformat())
+                # remove the cache file
+                if os.path.exists(store.CACHE_FILE):
+                    os.remove(store.CACHE_FILE)
+        logging.info("Finished downloading static GTFS data.")
+    except urllib.error.URLError as e:
+        logging.error(f"Error downloading static GTFS data: {e}")
 
 
 def make_base_arg_parser(description):
