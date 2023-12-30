@@ -297,6 +297,10 @@ class GTFS:
                     if entity.trip_update.trip.schedule_relationship == TRIP_ADDED and stop_number is not None:
                         # We can only work with an unscheduled "added" trip if we are given the expected arrival time.
                         if stop_time_update.arrival.time:
+                            route_id = entity.trip_update.trip.route_id
+                            if self.store.get('route', route_id) is None:
+                                logging.warning(f"Live data feed has added trip {trip_id} with unrecognised route {route_id}. ")
+                                continue
                             num_added += 1
                             live_additions = self.store.get('live_additions', stop_number, [])
                             new_addition = {
