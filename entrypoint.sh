@@ -5,6 +5,7 @@ redis-server --dir $DATA_DIR &
 REDIS_PID=$!
 
 cd /app
+source /app/venv/bin/activate
 cmd="python3 server.py --host 0.0.0.0 --redis redis://localhost:6379 $@"
 echo $cmd
 $cmd &
