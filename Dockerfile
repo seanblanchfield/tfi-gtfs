@@ -17,5 +17,6 @@ RUN \
 WORKDIR /app
 ADD . /app/
 RUN rm -rf /app/data/*
-RUN python3 -m pip install -r requirements.txt
+RUN python3 -m venv /app/venv
+RUN /app/venv/bin/python -m pip install -r requirements.txt
 ENTRYPOINT [ "/app/entrypoint.sh" ]
