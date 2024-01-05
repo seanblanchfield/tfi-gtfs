@@ -1,4 +1,4 @@
-ARG BUILD_FROM=redis:alpine
+ARG BUILD_FROM=redis:7.2.3-alpine
 FROM $BUILD_FROM
 
 ARG DATA_DIR=data
