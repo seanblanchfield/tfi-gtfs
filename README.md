@@ -1,7 +1,7 @@
 # Transport for Ireland GTFS REST API
 This project implements a simple REST server and command line utility for retrieving real-time information about public transport in Ireland (at least, for services operated by Dublin Bus, Bus Éireann, and Go-Ahead Ireland).
 
-This project is inspired by [Sean Rees's GTFS Upcoming](https://github.com/seanrees/gtfs-upcoming). I started from scratch because I wanted to significantly optimise memory consumption so I could host the API on a single board computer. I found the full dataset consumed up to 10 gigabytes of RAM when using *GTFS Upcoming*, while I've managed to get it down to less than 200 megabytes after a significant rewrite. Both projects all you to reduce RAM consumption by discarding data that does not pertained to a list of specific transport stops. 
+This project is inspired by [Sean Rees's GTFS Upcoming](https://github.com/seanrees/gtfs-upcoming). I started from scratch because I wanted to significantly optimise memory consumption so I could host the API on a single board computer. I found the full dataset consumed up to 10 gigabytes of RAM when using *GTFS Upcoming*, while I've managed to get it down to less than 200 megabytes after a significant rewrite. Both projects allow you to reduce RAM consumption by discarding data that does not pertain to a list of specific transport stops. 
 
 ## Background
 
