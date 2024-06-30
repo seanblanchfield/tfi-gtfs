@@ -3,6 +3,11 @@ This project implements a simple REST server and command line utility for retrie
 
 This project is inspired by [Sean Rees's GTFS Upcoming](https://github.com/seanrees/gtfs-upcoming). I started from scratch because I wanted to significantly optimise memory consumption so I could host the API on a single board computer. I found the full dataset consumed up to 10 gigabytes of RAM when using *GTFS Upcoming*, while I've managed to get it down to less than 200 megabytes after a significant rewrite. Both projects allow you to reduce RAM consumption by discarding data that does not pertain to a list of specific transport stops. 
 
+
+#### Consider joining the Dublin Smart Home mailing list
+
+There's a [Dublin Smart Home](https://groups.google.com/g/smart-home-dublin) google group. Consider joining it!
+
 ## Background
 
 The [National Transport Authority (NTA)](https://www.nationaltransport.ie/) of Ireland operates a public-transport brand called [Transport for Ireland](https://www.transportforireland.ie/) or *TFI*, which pulls together all information related to public transport. From the point of view of the average commuter, *TFI* is in charge of buses and trains. The NTA previously provided a real-time passenger information (RTPI) REST API that allowed the status of routes serving particular stops to be easily queried, but this API was discontinued in September 2020 ([perhaps due to scalability issues and breaches of fair use](https://data.gov.ie/blog/update-on-availability-of-the-real-time-travel-information-api)), and was replaced with a [GTFS-R API](https://www.transportforireland.ie/news/new-transport-data-feed-for-app-developers-now-online/).  *General Transit Feed Specification* (GTFS) is a protocol designed by Google to allow transit operators to communicate static and real-time schedule information to Google Maps. The static data consists of a zip file at a well-known URL that containing metadata files describing operators, routes, stops, and the schedule (static data is available for most public transport services, as described [here](https://www.transportforireland.ie/transitData/PT_Data.html)). The real-time part is an API endpoint that returns the status of the entire fleet of vehicles that are currently on the road/tracks (real-time information is currently only provided for a subset of bus operators: Dublin Bus, Bus Éireann, and Go-Ahead Ireland). This real-time feed needs to be interpreted in conjunction with the metadata from the static zip file.  This architecture seems convenient for Google, who are interested in mass-syncing all available information. However, it is inconvenient if you are an average user who has a specific query about upcoming arrivals at a particular stop or station.  This project bridges that gap.
@@ -313,3 +318,5 @@ Unit tests are provided in `tests.py`, with test fixtures in `test_data/`. Run t
 ``` bash
 python3 -m unittest test
 ```
+
+
