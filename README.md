@@ -1,7 +1,16 @@
+Fork from https://github.com/seanblanchfield/tfi-gtfs to add https support.
+For instance when used from homeassistant with https enabled (e.g. to have mobile app access), https is required.
+I replaved the waitress server, which is more suited to handle serveral requests and can scale with the flask embedded server.
+This works well for the use case of home assistant, where no scalability is needed and only a few clients will do requests.
+But *this should not be used* in a context where many customers and requests are expected.
+
+To enable SSL, certificate and key must be provided either in the settings, throuhg env var, or arguments.
+If one of those is not specified, the server will revert to http.
+
 # Transport for Ireland GTFS REST API
 This project implements a simple REST server and command line utility for retrieving real-time information about public transport in Ireland (at least, for services operated by Dublin Bus, Bus Éireann, and Go-Ahead Ireland).
 
-This project is inspired by [Sean Rees's GTFS Upcoming](https://github.com/seanrees/gtfs-upcoming). I started from scratch because I wanted to significantly optimise memory consumption so I could host the API on a single board computer. I found the full dataset consumed up to 10 gigabytes of RAM when using *GTFS Upcoming*, while I've managed to get it down to less than 200 megabytes after a significant rewrite. Both projects allow you to reduce RAM consumption by discarding data that does not pertain to a list of specific transport stops. 
+This project is inspired by [Sean Rees's GTFS Upcoming](https://github.com/seanrees/gtfs-upcoming). I started from scratch because I wanted to significantly optimise memory consumption so I could host the API on a single board computer. I found the full dataset consumed up to 10 gigabytes of RAM when using *GTFS Upcoming*, while I've managed to get it down to less than 200 megabytes after a significant rewrite. Both projects allow you to reduce RAM consumption by discarding data that does not pertain to a list of specific transport stops.
 
 
 #### Consider joining the Dublin Smart Home mailing list
@@ -16,7 +25,7 @@ The [National Transport Authority (NTA)](https://www.nationaltransport.ie/) of I
 
 This project is a GTFS-R client, which reads all static and realtime transport fleet information into RAM. It then provides a simple REST API to allow querying of upcoming scheduled and real-time arrivals at any particular stop.
 
-On startup, it downloads the static data and parses it into memory (by default, it will re-download this whenever the data is updated). It also periodically queries the real-time API, and stores received information about arrival delays, cancelations and additions into memory (by default, it will do this every minute). The in-memory information can then be efficiently queried to return a list of all scheduled and real-time arrivals at any particular stop. 
+On startup, it downloads the static data and parses it into memory (by default, it will re-download this whenever the data is updated). It also periodically queries the real-time API, and stores received information about arrival delays, cancelations and additions into memory (by default, it will do this every minute). The in-memory information can then be efficiently queried to return a list of all scheduled and real-time arrivals at any particular stop.
 
 ## How to Run
 
@@ -56,11 +65,11 @@ You can specify your API key in either of the following ways:
 Export an environment variable called `API_KEY`:
 ``` bash
 export API_KEY=abcdefghijklmnopqrstuvwxyz1234567890
-python3 server.py 
+python3 server.py
 ```
-or 
+or
 ``` bash
-API_KEY=abcdefghijklmnopqrstuvwxyz1234567890 python3 server.py 
+API_KEY=abcdefghijklmnopqrstuvwxyz1234567890 python3 server.py
 ```
 
 Specify it in the settings file (preferably in  `local_settings.py`):
@@ -112,7 +121,7 @@ python3 gtfs.py 1358 7581
 
 ## Running in Docker
 
-A dockerfile is provided to allow you to easily build and run the project in a Docker container. This container is configured to start and use an internal *redis* instance, producing optimal memory efficiency. 
+A dockerfile is provided to allow you to easily build and run the project in a Docker container. This container is configured to start and use an internal *redis* instance, producing optimal memory efficiency.
 
 To build the docker container, change into the project directory where the `Dockerfile` is and run:
 ``` bash
@@ -144,7 +153,7 @@ This project is also available as a *Home Assistant* addon. Visit my [Home Assis
 
 
 ## Querying the server
-The API is hosted at the path `/api/v1/arrivals`. You can query it by supplying one or more "stop" query parameters. 
+The API is hosted at the path `/api/v1/arrivals`. You can query it by supplying one or more "stop" query parameters.
 
 For example, if the server is running on localhost, visit [http://localhost:7341/api/v1/arrivals?stop=1358](http://localhost:7341/api/v1/arrivals?stop=1358) in your web browser to receive a table of upcoming arrivals at stop `1358`.
 
@@ -178,7 +187,7 @@ curl "http://localhost:7341/api/v1/arrivals?stop=1358" -H "Accept: text/plain"
 curl "http://localhost:7341/api/v1/arrivals?stop=1358" -H "Accept: text/html"
 ```
 
-If you visit the URL from your web browser, you web browser will automatically send an `Accept: text/html` header, so you should receive the response as a HTML table. 
+If you visit the URL from your web browser, you web browser will automatically send an `Accept: text/html` header, so you should receive the response as a HTML table.
 
 ## Running with Redis
 
@@ -191,7 +200,7 @@ docker run --name redis-gtfs -p 127.0.0.1:6379:6379/tcp  -d redis
 You may see warnings from *redis* saying that "*Memory overcommit must be enabled!*". This issue is discussed in [this docker issue](https://github.com/docker-library/redis/issues/19) and to get rid of the warning you must currently modify a setting on the host:
 
 ``` bash
-sudo sysctl vm.overcommit_memory=1 
+sudo sysctl vm.overcommit_memory=1
 ```
 
 Then, pass that redis instance to the python program passing the `--redis` argument or setting the `REDIS_URL` setting, for example:
@@ -245,7 +254,7 @@ If `FILTER_STOPS` is supplied, data that does not pertain to the given stops wil
 
 #### Beware of occasional high RAM use
 
-When first run, or whenever the cache file doesn't exist or is old or invalid (e.g., was generated for a different set of filter stops), it will be rebuilt at startup by a sub-process. This sub-process is short-lived but memory intensive, and in my testing grows to up to 1.5 gigabytes before finishing. 
+When first run, or whenever the cache file doesn't exist or is old or invalid (e.g., was generated for a different set of filter stops), it will be rebuilt at startup by a sub-process. This sub-process is short-lived but memory intensive, and in my testing grows to up to 1.5 gigabytes before finishing.
 
 ## Execution Model
 
@@ -255,14 +264,14 @@ Internally, `server.py` uses [Waitress](https://docs.pylonsproject.org/projects/
 
 `server.py` also starts a long-lived thread to handle scheduled tasks like polling the live API, or redownloading the static schedule data.
 
-Actual downloading and parsing of static schedule data is handled in sub-processes, as it is a memory-intensive operation, and we want to allow the system to reclaim that memory after the new schedule has been processed. These sub-processes are simply instances of `gtfs.py`. `server.py` will launch `gtfs.py` in this way on startup (if the current downloaded schedule is out of date, or if the current cache is out of data or invalid). It will also check every hour if there is new static GTFS data (by performing a `HTTP HEAD` request) available and if necessary will launch `gtfs.py` to download it.  
+Actual downloading and parsing of static schedule data is handled in sub-processes, as it is a memory-intensive operation, and we want to allow the system to reclaim that memory after the new schedule has been processed. These sub-processes are simply instances of `gtfs.py`. `server.py` will launch `gtfs.py` in this way on startup (if the current downloaded schedule is out of date, or if the current cache is out of data or invalid). It will also check every hour if there is new static GTFS data (by performing a `HTTP HEAD` request) available and if necessary will launch `gtfs.py` to download it.
 
 `server.py` runs `gtfs.py ` with the `--rebuild-cache` argument, which causes it to re-parse the static GTFS data (which may consume in the region of 1.5 gigabytes of RAM) and write a new `cache.pickle` file (which may take a minute or more depending on your hardware).  After writing the pickle file, the `gtfs.py` process ends, its memory is released, and `server.py` continues execution, by loading or reloading that pickle file, which is a fast operation.
 
 ## Advice for high-volume deployments
 
-- Workers will generally only be blocked on network I/O with redis, which is minimal. To compensate for this, consider increasing the number of requests that can be simultaneously served by `server.py` by increasing `WORKERS` to 2 or 3. 
-- To allow multiple CPU cores to be used, you will need to launch multiple instances of `server.py`. This is due to the python [Global Interpreter Lock](https://superfastpython.com/gil-removed-from-python/) (GIL). 
+- Workers will generally only be blocked on network I/O with redis, which is minimal. To compensate for this, consider increasing the number of requests that can be simultaneously served by `server.py` by increasing `WORKERS` to 2 or 3.
+- To allow multiple CPU cores to be used, you will need to launch multiple instances of `server.py`. This is due to the python [Global Interpreter Lock](https://superfastpython.com/gil-removed-from-python/) (GIL).
 - If launching multiple instances, use *Redis* to avoid duplicating all the schedule data in each process. Also, avoid duplicating work of parsing schedule data and polling the live API from each process by configuring just one of the processes with the desired `POLLING_INTERVAL`, and set it to a very high value in all the other processes (3153600000 == 100 years in seconds).
 
 ## Developing
@@ -282,11 +291,11 @@ The project consists of the following modules:
     - starts a thread to manage scheduled tasks
     - runs the HTTP server
 
-Static GTFS data is downloaded to the `/data` directory. 
+Static GTFS data is downloaded to the `/data` directory.
 
 ### Running and Debugging
 
-The following tips are based on *VSCode*, but you should be able to adapt them to other IDEs. 
+The following tips are based on *VSCode*, but you should be able to adapt them to other IDEs.
 
 Make sure you have set up the virtual environment as follows:
 
@@ -303,14 +312,14 @@ Consider creating a `local_settings.py` file, so you don't have to always passin
 ``` python
 API_KEY = "abcdefghijklmnopqrstuvwxyz1234567890"
 LOG_LEVEL = "DEBUG"
-``` 
+```
 
 A `launch.json` file is provided for *VSCode*, which contains a configuration to launch either `server.py` or `gtfs.py`. You should be able to run either of them at this point.
 
 If you want to debug with redis, you will need a redis instance. See the "Running with Redis" section for info on starting a docker redis container. For debugging purposes I suggest you use your `local_settings.py` file to pass a `REDIS_URL` (to avoid accidentally committing changes to `launch.json`).
 
 ### Pull Requests
-Further development and PRs are very welcome. 
+Further development and PRs are very welcome.
 
 ### Testing
 
@@ -318,5 +327,3 @@ Unit tests are provided in `tests.py`, with test fixtures in `test_data/`. Run t
 ``` bash
 python3 -m unittest test
 ```
-
-

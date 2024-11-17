@@ -34,7 +34,7 @@ class JsonProvider(DefaultJSONProvider):
     def default(self, obj):
         if isinstance(obj, datetime.datetime):
             return obj.isoformat()
-        return super(JsonProvider, self).default(obj)    
+        return super(JsonProvider, self).default(obj)
 
 app.json = JsonProvider(app)
 
@@ -161,7 +161,7 @@ def format_response(func):
             for mime_type in ('application/json', 'application/yaml', 'text/csv', 'text/plain', 'text/html', None):
                 if mime_type in accept_header:
                     break
-        
+
         if mime_type == 'application/json':
             return jsonify(response_data)
         elif mime_type == 'application/yaml':
@@ -176,7 +176,7 @@ def format_response(func):
             headers = ",".join(["stop", "stop_name", "route", "headsign", "agency", "scheduled_arrival", "estimated_arrival"])
             data = [
                 ", ".join([stop_number, stop_data['stop_name'], stop['route'], stop['headsign'], stop['agency'],  to_iso_date(stop['scheduled_arrival']), to_iso_date(stop['real_time_arrival'])])
-                for stop_number, stop_data in response_data.items() 
+                for stop_number, stop_data in response_data.items()
                 for stop in stop_data['arrivals']
             ]
             # convert the list of dicts into a CSV string
@@ -188,7 +188,7 @@ def format_response(func):
                 rows = "\n".join([f"<tr><td>{row.replace(',', '</td><td>')}</td></tr>" for row in data])
                 html = HTML_TEMPLATE.format(headers=headers, rows=rows, css=CSS, script=SCRIPT)
                 return Response(html, mimetype=mime_type)
-    
+
     return decorated_function
 
 
@@ -230,14 +230,18 @@ if __name__ == "__main__":
                         help=f"Number of worker threads to use (default: {settings.WORKERS})")
     parser.add_argument('-p', '--polling-period', type=int, default=settings.POLLING_PERIOD,
                         help=f"Polling period for live GTFS feed (default: {settings.POLLING_PERIOD})")
+    parser.add_argument('-sc', '--server-cert', type=str, default=settings.SSL_CERT,
+                        help=f"Server certificate path, to enable SSL (default: {settings.SSL_CERT})")
+    parser.add_argument('-sk', '--server-key', type=str, default=settings.SSL_KEY,
+                        help=f"Server key path, to enable SSL (default: {settings.SSL_KEY})")
     args = parser.parse_args()
-    
+
     logging.basicConfig(level=getattr(logging, args.log_level))
 
     filter_stops = settings.FILTER_STOPS
     if args.filter is not None:
         filter_stops = args.filter.split(',')
-    
+
     # prepare to fork a sub-process to download or reparse static data
     sub_process_args = None
     if check_for_new_static_data():
@@ -245,23 +249,23 @@ if __name__ == "__main__":
     elif not args.redis and not check_cache_file() or not check_cache_info(filter_stops):
         logging.info(f"Rebuilding.")
         sub_process_args = ["python", "gtfs.py", "--rebuild-cache"]
-    
+
     extra_sub_process_args = []
     if filter_stops is not None:
         extra_sub_process_args += ["--filter", ",".join(filter_stops)]
     if args.redis is not None:
         extra_sub_process_args += ["--redis", args.redis]
-    
+
     if sub_process_args:
         # fork the process and wait for it.
         # forking allows us to avoid incurring the memory overhead of parsing the data in this
         proc = subprocess.Popen(sub_process_args + extra_sub_process_args)
         proc.wait()
-    
+
     # set up the GTFS object
     gtfs = GTFS(
-        live_url=args.live_url, 
-        api_key=args.api_key, 
+        live_url=args.live_url,
+        api_key=args.api_key,
         redis_url=args.redis,
         filter_stops=filter_stops,
         profile_memory=args.profile
@@ -282,7 +286,7 @@ if __name__ == "__main__":
                     'arrivals': gtfs.get_scheduled_arrivals(stop_number, now, datetime.timedelta(minutes=args.minutes))
                 }
         return arrivals
-    
+
     # serve a basic static page with a link to /api/v1/arrivals at the root
     @app.route('/')
     def index():
@@ -297,7 +301,12 @@ if __name__ == "__main__":
             </body>
         </html>
         """
-    
+
     # start server
-    print("Waiting for requests...")
-    waitress.serve(app, host=args.host, port=args.port, threads=args.workers)
+    if args.server_cert and args.server_key:
+        print(f"Using SSL cert {args.server_cert} and key {args.server_key}")
+        print(f"Waiting for requests on https://{args.host}:{args.port}")
+        app.run(host=args.host, port=args.port, ssl_context=(args.server_cert, args.server_key))
+    else:
+        print(f"Waiting for requests on http://{args.host}:{args.port}")
+        waitress.serve(app, host=args.host, port=args.port, threads=args.workers)
