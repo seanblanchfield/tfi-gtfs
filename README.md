@@ -1,34 +1,3 @@
-# SSL support
-
-Basic HTTPS support is provided for instance when homeassistant with https enabled (e.g. to have mobile app access), https is required.
-I replaved the waitress server, which is more suited to handle serveral requests and can scale with the flask embedded server.
-This works well for the use case of home assistant, where no scalability is needed and only a few clients will do requests.
-But *this should not be used* in a context where many customers and requests are expected.
-
-To enable SSL, certificate and key must be provided either in the settings, throuhg env var, or arguments.
-If one of those is not specified, the server will revert to http.
-
-I've published a docker image as well that can be used. Example of use with docker compose:
-```
-    # Dublin bus real time api
-    tfi:
-        container_name: tfi
-        hostname: tfi
-        image: vche/tfi-gtfs:latest
-        <<: [*common-service, *loki-logging]
-        environment:
-            <<: *common-env
-            API_KEY: f93f81b811324c93bd3567f1d72d0f47
-            REDIS_URL: 192.168.0.195
-            SSL_CERT: "/certs/domodwarf/domodwarf-cert.pem"
-            SSL_KEY: "/certs/domodwarf/domodwarf-key.pem"
-        volumes:
-            #     - $DOCKERDIR/config/settings.py:/app/settings.py:ro
-            - $DOCKERDIR/syncthing/config/Sync/certs:/certs
-        ports:
-            - 7341:7341
-```
-
 # Transport for Ireland GTFS REST API
 This project implements a simple REST server and command line utility for retrieving real-time information about public transport in Ireland (at least, for services operated by Dublin Bus, Bus Éireann, and Go-Ahead Ireland).
 
@@ -178,7 +147,7 @@ This works well for the use case of home assistant, where no scalability is need
 But *this should not be used* in a context where many customers and requests are expected.
 
 To enable SSL, certificate and key must be provided either in the settings, throuhg env var, or arguments.
-If one of those is not specified, the server will revert to http.
+If none of those is not specified, the server will revert to http.
 
 I've published a [docker image](https://hub.docker.com/r/vche/tfi-gtfs) as well that can be used. Example of use with docker compose:
 ```
