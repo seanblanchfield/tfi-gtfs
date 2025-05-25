@@ -196,7 +196,7 @@ def start_scheduled_jobs(gtfs, polling_period, extra_sub_process_args: list):
     # start a thread that refreshes live data every polling_period seconds
     def refresh():
         check_delay = datetime.timedelta(hours=1)
-        next_static_download_check = datetime.datetime.now(datetime.UTC) + check_delay
+        next_static_download_check = datetime.datetime.now(datetime.timezone.utc) + check_delay
         while True:
             logging.debug("Updating from live feed.")
             rate_limit_count = gtfs.refresh_live_data()
@@ -205,7 +205,7 @@ def start_scheduled_jobs(gtfs, polling_period, extra_sub_process_args: list):
             time.sleep(int(polling_period + polling_period * 1.5**rate_limit_count))
 
             # Check if the static GTFS data should be downloaded
-            if datetime.datetime.now(datetime.UTC) > next_static_download_check:
+            if datetime.datetime.now(datetime.timezone.utc) > next_static_download_check:
                 if check_for_new_static_data():
                     logging.info("Downloading new static data.")
                     sub_process_args = ["python", "gtfs.py", "--download", "--rebuild-cache"] + extra_sub_process_args
@@ -213,7 +213,7 @@ def start_scheduled_jobs(gtfs, polling_period, extra_sub_process_args: list):
                     proc.wait()
                     # Not reload the cache
                     gtfs.store.reload_cache()
-                next_static_download_check = datetime.datetime.now(datetime.UTC) + check_delay
+                next_static_download_check = datetime.datetime.now(datetime.timezone.utc) + check_delay
     t = threading.Thread(target=refresh)
     t.daemon = True
     t.start()

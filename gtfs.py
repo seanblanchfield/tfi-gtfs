@@ -115,8 +115,12 @@ class GTFS:
             next(reader)
             for row in reader:
                 service_id = row[0]
-                start_date = datetime.datetime.strptime(row[8], '%Y%m%d').date()
-                end_date = datetime.datetime.strptime(row[9], '%Y%m%d').date()
+                # Handle date format with or without hyphens
+                start_date_str = row[8].replace('-', '')
+                start_date = datetime.datetime.strptime(start_date_str, '%Y%m%d').date()
+                # Handle date format with or without hyphens
+                end_date_str = row[9].replace('-', '')
+                end_date = datetime.datetime.strptime(end_date_str, '%Y%m%d').date()
                 # days represented by '0' or '1'. Convert to bools.
                 days = [bool(int(day)) for day in row[1:8]]
                 self.store.set('service', service_id, {
@@ -137,7 +141,9 @@ class GTFS:
             next(reader)
             for row in reader:
                 service_id = row[0]
-                date = datetime.datetime.strptime(row[1], '%Y%m%d').date()
+                # Handle date format with or without hyphens
+                date_str = row[1].replace('-', '')
+                date = datetime.datetime.strptime(date_str, '%Y%m%d').date()
                 exception_type = int(row[2])
                 self.store.set('exception', f"{service_id}:{date}", exception_type)
 
