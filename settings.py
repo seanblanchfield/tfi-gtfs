@@ -13,6 +13,8 @@ HOST = os.environ.get('HOST', 'localhost')
 PORT = os.environ.get('PORT', 7341)
 WORKERS = os.environ.get('WORKERS', 1)
 DATA_DIR = Path(os.environ.get('DATA_DIR', 'data'))
+SSL_CERT = os.environ.get('SSL_CERT', None)
+SSL_KEY = os.environ.get('SSL_KEY', None)
 
 # set default logging level to INFO
 LOG_LEVEL = os.environ.get('LOG_LEVEL', 'INFO').upper()
@@ -26,7 +28,7 @@ if FILTER_STOPS:
     FILTER_STOPS = [stop.strip() for stop in FILTER_STOPS.split(',')]
 
 # Optionally create a `local_settings.py` file to override these settings
-# during development. This file will be ignored by git. 
+# during development. This file will be ignored by git.
 try:
     from local_settings import *
 except ImportError:
