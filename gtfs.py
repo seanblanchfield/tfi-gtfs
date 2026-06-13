@@ -220,11 +220,11 @@ class GTFS:
 
     def _pack_trip(self, route_id, service_id, headsign):
         # byte pack the data to save space
-        return struct.pack('12s4s25s', _s2b(route_id), _s2b(service_id), _s2b(headsign))
+        return struct.pack('20s4s25s', _s2b(route_id), _s2b(service_id), _s2b(headsign))
 
     def _unpack_trip(self, trip_buffer):
         # unpack the data from the bit packed format
-        route_id, service_id, headsign = struct.unpack('12s4s25s', trip_buffer)
+        route_id, service_id, headsign = struct.unpack('20s4s25s', trip_buffer)
         return _b2s(route_id), _b2s(service_id), _b2s(headsign)
 
     def _read_trips(self) -> dict:
