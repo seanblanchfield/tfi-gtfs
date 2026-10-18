@@ -13,29 +13,36 @@ import size
 CACHE_FILE = settings.DATA_DIR / "cache.pickle"
 
 class Store:
-    def __init__(self, redis_url:str=None, namespace_config:dict[dict[str]]={}):
+    def __init__(self, redis_url:str=None, namespace_config:dict[dict[str]]={}, namespace_prefix:str=""):
         # namespace_config is a dictionary specifying treatment of different pieces of data.
         # Each key is the prefix ending before the first '%' in keys that it should be matched against.
         # Potential values are:
         #  - cache: store the value in memory as well as redis for faster retrieval next time
         #  - expiry: set an expiry time on the key
         self.namespace_config = namespace_config
+        self.namespace_prefix = namespace_prefix
         self.data = collections.defaultdict(dict)
         if redis_url:
             logging.info("Using redis for data storage at %s", redis_url)
             self.redis = redis.from_url(redis_url)
         else:
             self.redis = None
-        self.reload_cache()
+        if not self.redis:
+            self.reload_cache()
+
+    def _namespace(self, namespace):
+        return f"{self.namespace_prefix}{namespace}"
     
     def clear_cache(self):
         if self.redis:
-            self.redis.flushdb()
-        else:
-            self.data = collections.defaultdict(dict)
-        # Remove the cache
-        if os.path.exists(CACHE_FILE):
+            if not self.namespace_prefix:
+                raise ValueError("A namespace prefix is required to clear a Redis cache safely")
+            keys = list(self.redis.scan_iter(match=f"{self.namespace_prefix}*"))
+            if keys:
+                self.redis.delete(*keys)
+        elif os.path.exists(CACHE_FILE):
             os.remove(CACHE_FILE)
+        self.data = collections.defaultdict(dict)
     
     def write_cache(self):
         if self.redis:
@@ -84,7 +91,7 @@ class Store:
                 value = cached_item
         
         if value is None and self.redis:
-            value = self.redis.hget(namespace, key)
+            value = self.redis.hget(self._namespace(namespace), key)
             if value is not None:
                 value = pickle.loads(value)
             # if we still don't have a value, use the default
@@ -99,7 +106,7 @@ class Store:
     def set(self, namespace, key, value):
         config = self.namespace_config.get(namespace, {})
         if self.redis:
-            self.redis.hset(namespace, key, pickle.dumps(value))
+            self.redis.hset(self._namespace(namespace), key, pickle.dumps(value))
         else:
             is_cachable = config.get('cache')
             if is_cachable:
@@ -108,7 +115,7 @@ class Store:
     
     def delete(self, namespace, key):
         if self.redis:
-            self.redis.hdel(namespace, key)
+            self.redis.hdel(self._namespace(namespace), key)
         else:
             ns = self.data.get(namespace, {})
             if key in ns:
@@ -118,26 +125,26 @@ class Store:
     def add(self, namespace, value):
         config = self.namespace_config.get(namespace, {})
         if self.redis:
-            self.redis.sadd(namespace, value)
+            self.redis.sadd(self._namespace(namespace), value)
         else:
             self.data.setdefault(namespace, set()).add(value)
     
     def remove(self, namespace, value):
         if self.redis:
-            self.redis.srem(namespace, value)
+            self.redis.srem(self._namespace(namespace), value)
         else:
             self.data.setdefault(namespace, set()).discard(value)
     
     def has(self, namespace, value):
         config = self.namespace_config.get(namespace, {})
         if self.redis:
-            return self.redis.sismember(namespace, value) == 1
+            return self.redis.sismember(self._namespace(namespace), value) == 1
         else:
             return value in self.data.setdefault(namespace, set())
     
     def cardinality(self, namespace):
         if self.redis:
-            return self.redis.scard(namespace)
+            return self.redis.scard(self._namespace(namespace))
         else:
             return len(self.data.setdefault(namespace, set()))
 

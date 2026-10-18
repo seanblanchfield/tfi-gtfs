@@ -246,7 +246,7 @@ if __name__ == "__main__":
     sub_process_args = None
     if check_for_new_static_data():
         sub_process_args = ["python", "gtfs.py", "--download", "--rebuild-cache"]
-    elif not args.redis and not check_cache_file() or not check_cache_info(filter_stops):
+    elif not args.redis and (not check_cache_file() or not check_cache_info(filter_stops)):
         logging.info(f"Rebuilding.")
         sub_process_args = ["python", "gtfs.py", "--rebuild-cache"]
 

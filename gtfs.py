@@ -15,6 +15,12 @@ from google.transit import gtfs_realtime_pb2
 import settings
 import store
 
+# Increment this whenever a persisted cache representation changes. Version 1 is
+# the unversioned cache format used by releases before schema markers existed.
+CACHE_SCHEMA_VERSION = 1
+LEGACY_CACHE_SCHEMA_VERSION = 1
+REDIS_NAMESPACE_PREFIX = f"tfi-gtfs:v{CACHE_SCHEMA_VERSION}:"
+
 def _s2b(s):
     return s.encode('utf-8')
 
@@ -49,8 +55,25 @@ class GTFS:
                 'cache': True,
                 'expiry': 3600
             }
-        self.store = store.Store(redis_url=redis_url, namespace_config=namespace_config)
-        if rebuild_cache:
+        self.store = store.Store(
+            redis_url=redis_url,
+            namespace_config=namespace_config,
+            namespace_prefix=REDIS_NAMESPACE_PREFIX if redis_url else ""
+        )
+        cache_initialized = self.store.get('status', "initialized") is not None
+        cached_schema_version = self.store.get('status', "schema_version")
+        if cached_schema_version is None and cache_initialized:
+            # Redis data was stored without a prefix before cache versioning, so
+            # the versioned namespace is empty and will be rebuilt automatically.
+            # An unversioned local pickle belongs to the legacy schema.
+            cached_schema_version = None if redis_url else LEGACY_CACHE_SCHEMA_VERSION
+        if rebuild_cache or not cache_initialized or cached_schema_version != CACHE_SCHEMA_VERSION:
+            if not rebuild_cache and cache_initialized:
+                logging.info(
+                    "GTFS cache schema changed from %r to %r; rebuilding cache.",
+                    cached_schema_version,
+                    CACHE_SCHEMA_VERSION
+                )
             self.store.clear_cache()
 
         if self.store.get('status', "initialized") is None:
@@ -78,6 +101,7 @@ class GTFS:
         self._read_stop_times()
         logging.info("Loading trips.")
         self._read_trips()
+        self.store.set('status', "schema_version", CACHE_SCHEMA_VERSION)
         self.store.set('status', "initialized", True)
         logging.info("Persisting data.")
         self.store.write_cache()
@@ -504,7 +528,8 @@ def check_cache_info(filter_stops):
         return False
     with open(CACHE_INFO_FILE, "r") as f:
         cache_info = json.load(f)
-        if cache_info.get('filter_stops') != sorted(list(filter_stops)) if filter_stops else None:
+        expected_filter_stops = sorted(list(filter_stops)) if filter_stops else None
+        if cache_info.get('filter_stops') != expected_filter_stops:
             return False
     return True
 
