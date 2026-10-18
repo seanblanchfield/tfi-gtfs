@@ -226,6 +226,13 @@ class TestGTFS(unittest.TestCase):
         packed = self.gtfs._pack_trip(*trip_data)
         unpacked = self.gtfs._unpack_trip(packed)
         self.assertEqual(trip_data, unpacked)
+
+    def test_pack_trip_preserves_long_route_id(self):
+        trip_data = ("DUB-PORTLAOIS-O", "67AB", "Portlaoise")
+        packed = self.gtfs._pack_trip(*trip_data)
+
+        self.assertEqual(len(packed), 49)
+        self.assertEqual(self.gtfs._unpack_trip(packed), trip_data)
     
     def test_valid_stop_number(self):
         # Data in test_data/cache.pickle is filtered for stop 1358 (Dame St.)

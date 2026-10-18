@@ -17,7 +17,7 @@ import store
 
 # Increment this whenever a persisted cache representation changes. Version 1 is
 # the unversioned cache format used by releases before schema markers existed.
-CACHE_SCHEMA_VERSION = 1
+CACHE_SCHEMA_VERSION = 2
 LEGACY_CACHE_SCHEMA_VERSION = 1
 REDIS_NAMESPACE_PREFIX = f"tfi-gtfs:v{CACHE_SCHEMA_VERSION}:"
 
