@@ -17,7 +17,7 @@ import store
 
 # Increment this whenever a persisted cache representation changes. Version 1 is
 # the unversioned cache format used by releases before schema markers existed.
-CACHE_SCHEMA_VERSION = 2
+CACHE_SCHEMA_VERSION = 4
 LEGACY_CACHE_SCHEMA_VERSION = 1
 REDIS_NAMESPACE_PREFIX = f"tfi-gtfs:v{CACHE_SCHEMA_VERSION}:"
 
@@ -36,7 +36,6 @@ class GTFS:
 
         logging.info(f"""Initializing GTFS with:
             live_url={live_url}
-            api_key={api_key}
             redis_url={redis_url}
             rebuild_cache={rebuild_cache}
             filter_stops={filter_stops}
@@ -46,9 +45,8 @@ class GTFS:
         self.api_key = api_key
         self.filter_stops = set(filter_stops) if filter_stops is not None else None
         self.filter_trips = None
-        # The set of trip_ids serving each stop. Used in conjunction with filter_stops. 
-        self.stop_trips = collections.defaultdict(set) 
         self.rate_limit_count = 0
+        self._last_live_prune = None
         namespace_config = {}
         if redis_url:
             namespace_config['route'] = namespace_config['service'] = namespace_config['stop'] = namespace_config['stop_numbers'] = {
@@ -101,6 +99,7 @@ class GTFS:
         self._read_stop_times()
         logging.info("Loading trips.")
         self._read_trips()
+        self.filter_trips = None
         self.store.set('status', "schema_version", CACHE_SCHEMA_VERSION)
         self.store.set('status', "initialized", True)
         logging.info("Persisting data.")
@@ -185,7 +184,6 @@ class GTFS:
                 stop_number = row[1] if row[1] != '0' else row[0]
                 self.store.set('stop', stop_id, stop_number)
                 self.store.set('stop_names', stop_number, stop_name)
-                self.store.add('stop_numbers', stop_number)
     
     def _pack_stop_data(self, trip_id, arrival_hour, arrival_min, arrival_sec, stop_sequence):
         # byte pack the data to save space
@@ -203,7 +201,9 @@ class GTFS:
         # stop_id -> list of (trip_id, arrival_time, departure_time, stop_sequence)
         start_time = time.time()
         print("Loading stop times...", end='')
-        stop_times = collections.defaultdict(dict)
+        stop_times = collections.defaultdict(bytearray)
+        self.filter_trips = set() if self.filter_stops is not None else None
+        count = 0
         with(open(settings.DATA_DIR / "stop_times.txt", "r")) as f:
             reader = csv.reader(f)
             # skip the first row of fieldnames
@@ -214,33 +214,21 @@ class GTFS:
                     sys.stdout.flush()
                 trip_id, arrival_time, _, stop_id, stop_sequence = row[0:5]
                 stop_number = self.store.get('stop', stop_id)
-                # keep track of which trips serve which stops
-                self.stop_trips[stop_number].add(trip_id)
-                # skip this stop if we have a filter list and it's not in it
-                if self.filter_stops and stop_number not in self.filter_stops:
+                count += 1
+                if self.filter_stops is not None and stop_number not in self.filter_stops:
                     continue
+                if self.filter_trips is not None:
+                    self.filter_trips.add(trip_id)
                 arrival_hour, arrival_min, arrival_sec = [int(x) for x in arrival_time.split(':')]
                 # arrival time is in the format HH:MM:SS. Pull out the hour so that trips can be 
                 # looked up by stop and hour.
                 hour = arrival_hour % 24
-                if hour not in stop_times[stop_number]:
-                     stop_times[stop_number][hour] = []
-                stop_times[stop_number][hour].append(self._pack_stop_data(trip_id, arrival_hour, arrival_min, arrival_sec, stop_sequence))
+                stop_times[(stop_number, hour)].extend(self._pack_stop_data(trip_id, arrival_hour, arrival_min, arrival_sec, stop_sequence))
 
-        logging.info(f"\n\nLoaded {idx + 1} stop times in {time.time() - start_time:.0f} seconds")
-        for stop_number in stop_times:
-            for hour in stop_times[stop_number]:
-                self.store.set('stop_times', f"{stop_number}:{hour}", stop_times[stop_number][hour])
-
-        # make a set containing the trip_ids that serve any of the stops in self.filter_stops
-        # so that we can filter out trips that don't serve any of the stops we are interested in.
-        if self.filter_stops is not None:
-            # flatten the list of lists into a single list
-            self.filter_trips = set([
-                trip_id for trip_ids in 
-                [self.stop_trips[stop_number] for stop_number in self.filter_stops] 
-                for trip_id in trip_ids
-            ])
+        logging.info(f"\n\nLoaded {count} stop times in {time.time() - start_time:.0f} seconds")
+        while stop_times:
+            (stop_number, hour), records = stop_times.popitem()
+            self.store.set('stop_times', f"{stop_number}:{hour}", bytes(records))
 
     def _pack_trip(self, route_id, service_id, headsign):
         # byte pack the data to save space
@@ -265,7 +253,7 @@ class GTFS:
                 service_id = row[1]
                 trip_id = row[2]
                 headsign = row[3]
-                if self.filter_trips and trip_id not in self.filter_trips:
+                if self.filter_trips is not None and trip_id not in self.filter_trips:
                     continue
                 self.store.set('trip', trip_id, self._pack_trip(route_id, service_id, headsign))
 
@@ -309,10 +297,13 @@ class GTFS:
         feed.ParseFromString(buf)
         timestamp = feed.header.timestamp
         num_updates, num_unrecognised_trips, num_added, num_cancelled = 0, 0, 0, 0
+        if self._last_live_prune is None or timestamp - self._last_live_prune >= 3600:
+            self._prune_live_data(timestamp)
+            self._last_live_prune = timestamp
         for entity in feed.entity:
             if entity.HasField('trip_update'):
                 trip_id = entity.trip_update.trip.trip_id
-                if self.filter_trips and trip_id not in self.filter_trips:
+                if self.filter_stops is not None and self.store.get('trip', trip_id) is None:
                     continue
                 trip_delays = []
                 for stop_time_update in entity.trip_update.stop_time_update:
@@ -363,18 +354,30 @@ class GTFS:
                             if delay < -60 * 60 * 24 * 7: 
                                 continue
                         num_updates += 1
-                        trip_delays.append({
-                            'stop_sequence': stop_time_update.stop_sequence,
-                            'stop_number': stop_number,
-                            'delay': delay,
-                            'arrival_time': arrival_time,
-                            'timestamp': timestamp
-                        })
+                        # Only the sequence and delay are used by arrival queries.
+                        trip_delays.append((stop_time_update.stop_sequence, delay))
 
-                if len(trip_delays):
-                    self.store.set('live_delays', trip_id, trip_delays)
+                if trip_delays:
+                    self.store.set('live_delays', trip_id, (timestamp, trip_delays))
         logging.debug(f"Got {num_updates} trip updates, {num_unrecognised_trips} unrecognised trips, {num_added} added trips, {num_cancelled} cancelled trips")
     
+    def _prune_live_data(self, timestamp):
+        # Expired records are no longer meaningful and otherwise accumulate forever.
+        for trip_id, (updated, _) in self.store.items('live_delays'):
+            if updated <= timestamp - 86400:
+                self.store.delete('live_delays', trip_id)
+        for trip_id, updated in self.store.items('live_cancelations'):
+            if updated <= timestamp - 86400:
+                self.store.delete('live_cancelations', trip_id)
+        for stop_number, additions in self.store.items('live_additions'):
+            current = [item for item in additions
+                       if item['arrival'].timestamp() >= timestamp]
+            if current:
+                if len(current) != len(additions):
+                    self.store.set('live_additions', stop_number, current)
+            else:
+                self.store.delete('live_additions', stop_number)
+
     def refresh_live_data(self):
         now = time.time()
         try:
@@ -403,20 +406,21 @@ class GTFS:
     def _get_live_delay(self, trip_id: str, stop_sequence: int):
         # find the real time update for this stop or the one with the highest sequence number
         # lower than this stop
-        updates = self.store.get('live_delays', trip_id)
-        if updates:
-            # updates is a sorted list of dicts, each of which contain a stop_sequence and delay
+        live_data = self.store.get('live_delays', trip_id)
+        if live_data:
+            _, updates = live_data
+            # updates is a sorted list of (stop_sequence, delay) pairs
             # binary search through the list to find the item with the closest stop_sequence that is 
             # less than or equal to the stop_sequence we are looking for
             left, right = 0, len(updates) - 1
             while left <= right:
                 mid = (left + right) // 2
-                if updates[mid]['stop_sequence'] < stop_sequence:
+                if updates[mid][0] < stop_sequence:
                     left = mid + 1
-                elif updates[mid]['stop_sequence'] > stop_sequence:
+                elif updates[mid][0] > stop_sequence:
                     right = mid - 1
                 else:
-                    return updates[mid]['delay']
+                    return updates[mid][1]
             # if we get here, we didn't find an exact match. left is the index of the first item
             # with a stop_sequence greater than the one we are looking for. If left is 0, there
             # is no update for this trip at this stop. Otherwise, return the delay of the previous
@@ -424,10 +428,10 @@ class GTFS:
             if left == 0:
                 return None
             else:
-                return updates[left - 1]['delay']
+                return updates[left - 1][1]
 
     def is_valid_stop_number(self, stop_number: str):
-        return self.store.has('stop_numbers', stop_number)
+        return self.store.contains_key('stop_names', stop_number)
 
     def get_stop_name(self, stop_number: str):
         return self.store.get('stop_names', stop_number)
@@ -447,7 +451,9 @@ class GTFS:
             stop_times = self.store.get('stop_times', f"{stop_number}:{hour}")
             if stop_times is None:
                 continue
-            for packed_stop_data in self.store.get('stop_times', f"{stop_number}:{hour}"):
+            record_size = struct.calcsize('12s4b')
+            for offset in range(0, len(stop_times), record_size):
+                packed_stop_data = stop_times[offset:offset + record_size]
                 trip_id, arrival_hour, arrival_min, arrival_sec, stop_sequence = self._unpack_stop_data(packed_stop_data)
                 time_since_midnight = datetime.timedelta(hours=now.hour, minutes=now.minute, seconds=now.second)
                 

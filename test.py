@@ -6,6 +6,7 @@
 import unittest
 import os
 import datetime
+import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -54,6 +55,9 @@ class TestStore(unittest.TestCase):
             def hget(self, namespace, key):
                 return self.hashes.get(namespace, {}).get(key)
 
+            def hexists(self, namespace, key):
+                return key in self.hashes.get(namespace, {})
+
             def sadd(self, namespace, value):
                 self.sets.setdefault(namespace, set()).add(value)
 
@@ -68,6 +72,8 @@ class TestStore(unittest.TestCase):
         self.assertIn('tfi-gtfs:v1:trip', s.redis.hashes)
         self.assertIn('tfi-gtfs:v1:stop_numbers', s.redis.sets)
         self.assertEqual(s.get('trip', 'trip-1'), b'trip data')
+        self.assertTrue(s.contains_key('trip', 'trip-1'))
+        self.assertFalse(s.contains_key('trip', 'missing'))
         self.assertTrue(s.has('stop_numbers', '1358'))
 
     def testRedisDoesNotLoadLocalPickleCache(self):
@@ -197,6 +203,61 @@ class TestCacheInfo(unittest.TestCase):
             gtfs.CACHE_INFO_FILE = old_cache_info_file
 
 
+class TestCompactStopTimes(unittest.TestCase):
+    def test_prunes_stale_live_data(self):
+        instance = gtfs.GTFS.__new__(gtfs.GTFS)
+        instance.store = store.Store()
+        instance.store.data.clear()
+        now = 200000
+        instance.store.set('live_delays', 'old', (now - 86400, [(1, 10)]))
+        instance.store.set('live_delays', 'new', (now - 1, [(1, 20)]))
+        instance.store.set('live_cancelations', 'old', now - 86400)
+        instance.store.set('live_cancelations', 'new', now - 1)
+        instance.store.set('live_additions', '101', [
+            {'timestamp': now - 7200, 'arrival': datetime.datetime.fromtimestamp(now + 60)},
+            {'timestamp': now - 1, 'arrival': datetime.datetime.fromtimestamp(now - 60)},
+        ])
+        instance._prune_live_data(now)
+        self.assertIsNone(instance.store.get('live_delays', 'old'))
+        self.assertEqual(instance._get_live_delay('new', 1), 20)
+        self.assertIsNone(instance.store.get('live_cancelations', 'old'))
+        self.assertEqual(instance.store.get('live_cancelations', 'new'), now - 1)
+        self.assertEqual(len(instance.store.get('live_additions', '101')), 1)
+
+    def test_filtered_loader_keeps_only_matching_trips(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory)
+            (path / "stop_times.txt").write_text(
+                "trip_id,arrival_time,departure_time,stop_id,stop_sequence\n"
+                "trip1,10:00:00,10:00:00,s1,1\n"
+                "trip1,10:05:00,10:05:00,s2,2\n"
+                "trip2,10:10:00,10:10:00,s2,1\n"
+            )
+            (path / "trips.txt").write_text(
+                "route_id,service_id,trip_id,headsign\n"
+                "r,1,trip1,Here\n"
+                "r,1,trip2,There\n"
+            )
+            for selected in ({"101"}, set(), None):
+                instance = gtfs.GTFS.__new__(gtfs.GTFS)
+                instance.filter_stops = selected
+                instance.store = store.Store()
+                instance.store.data.clear()
+                instance.store.set('stop', 's1', '101')
+                instance.store.set('stop', 's2', '102')
+                with patch.object(settings, 'DATA_DIR', path):
+                    instance._read_stop_times()
+                    instance._read_trips()
+                expected = {'trip1'} if selected else (set() if selected is not None else {'trip1', 'trip2'})
+                self.assertEqual(set(instance.store.data.get('trip', {})), expected)
+                records = instance.store.get('stop_times', '101:10')
+                if selected == set():
+                    self.assertIsNone(records)
+                else:
+                    self.assertIsInstance(records, bytes)
+                    self.assertEqual(instance._unpack_stop_data(records), ('trip1', 10, 0, 0, 1))
+
+
 class TestGTFS(unittest.TestCase):
 
     def setUp(self):
@@ -204,10 +265,28 @@ class TestGTFS(unittest.TestCase):
         # on 15/9/2023 at 09:10am IST.
         self.old_cache_file = store.CACHE_FILE
         store.CACHE_FILE = Path("test_data/cache.pickle")
-        self.gtfs = gtfs.GTFS(settings.GTFS_LIVE_URL, settings.API_KEY)
+        with patch.object(gtfs, "check_for_new_static_data", return_value=False):
+            self.gtfs = gtfs.GTFS(settings.GTFS_LIVE_URL, settings.API_KEY)
         with open("test_data/test_live_response.gtfsr", 'rb') as f:
             live_data = f.read()
             self.gtfs._parse_live_data(live_data)
+
+    def test_initialization_does_not_log_api_key(self):
+        with patch.object(gtfs, 'check_for_new_static_data', return_value=False), \
+             self.assertLogs(level='INFO') as logs:
+            gtfs.GTFS(settings.GTFS_LIVE_URL, 'secret-test-key')
+        self.assertNotIn('secret-test-key', '\n'.join(logs.output))
+
+    def test_live_feed_respects_filter_after_cache_reload(self):
+        with patch.object(gtfs, 'check_for_new_static_data', return_value=False):
+            filtered = gtfs.GTFS(settings.GTFS_LIVE_URL, settings.API_KEY, filter_stops=['unknown'])
+        # Simulate a cache built for a filter that matched no trips.
+        filtered.store.data['trip'].clear()
+        with open("test_data/test_live_response.gtfsr", 'rb') as feed:
+            filtered._parse_live_data(feed.read())
+        self.assertFalse(filtered.store.data.get('live_delays'))
+        self.assertFalse(filtered.store.data.get('live_cancelations'))
+        self.assertFalse(filtered.store.data.get('live_additions'))
 
     def test_string2bytes(self):
         test_string = "test_string123!£$"

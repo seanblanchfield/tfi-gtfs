@@ -230,6 +230,10 @@ python3 server.py --redis redis://localhost:6379
 
 When run directly, the default behaviour is to parse schedule data into local in-process data structures. This is convenient, but  python structures are space-inefficient, resulting in a lot of system memory being consumed.
 
+Stop-time records are grouped into compact binary buffers, and the loader only collects trip IDs for selected stops. Stop names also serve as the stop-number index, and live delays keep only the fields needed for queries. Live delays and cancellations older than 24 hours, and additions whose arrival has passed, are pruned approximately hourly when feed updates are received.
+
+On the bundled single-stop test data, these changes reduce the measured in-process data structures from 3.61 MB to 3.02 MB before live updates, and from 4.02 MB to 3.10 MB after parsing the supplied live feed (decimal MB, including shared objects only once). These figures are object sizes, not process RSS, and depend on the feed and configuration. The static cache format is versioned and older caches are rebuilt automatically. With Redis, the new version uses a new namespace; old `tfi-gtfs:v2:*` and `tfi-gtfs:v3:*` keys are left in Redis and can be removed separately when no older instance needs them.
+
 Another way to reduce memory consumption is to specify a list of stops that you are solely interested in, so that data pertaining to all other stops can be discarded. You can do this by using the `FILTER_STOPS` option or `--filter` argument.
 
 ### Memory usage comparison
@@ -239,7 +243,7 @@ Another way to reduce memory consumption is to specify a list of stops that you 
 
 #### Loading data for all stops
 
-In a comparitive test on a 64 bit laptop, with all stops loaded I observed the following memory consumption patterns while running `server.py` (comparative values
+In an older comparison on a 64 bit laptop, with all stops loaded I observed the following memory consumption patterns while running `server.py` (comparative values
 for [GTFS-Upcoming](https://github.com/seanrees/gtfs-upcoming) are also given).
 | Test             | Python data  | Python Total  | Redis data   | Redis Total  |
 |---               |---           | ---           | ---          |   ---        |
@@ -269,9 +273,11 @@ If `FILTER_STOPS` is supplied, data that does not pertain to the given stops wil
 
 - The on-disk cache (`cache.pickle`) file expands by a factor of approximately 3 in RAM. For example, a 119MB cache file will translate into an additional 384MB RAM usage.
 
-#### Beware of occasional high RAM use
+#### Memory during a fresh cache build
 
-When first run, or whenever the cache file doesn't exist or is old or invalid (e.g., was generated for a different set of filter stops), it will be rebuilt at startup by a sub-process. This sub-process is short-lived but memory intensive, and in my testing grows to up to 1.5 gigabytes before finishing.
+A Home Assistant OS test on an Odroid N2 with approximately five configured stops observed 1.099 GiB in use after a fresh build with the previous version, compared with 93.45 MiB after a fresh build with the optimized version (about 92% lower). Restarting the previous version with its cache already built used 82.62 MiB. These are observations from one installation, not guaranteed peak measurements; actual use varies with the feed, configuration and measurement method.
+
+The improvement is especially useful on low-memory systems during the initial load. Loading all stops, downloading a new feed, or rebuilding a cache can still use more memory than a normal restart.
 
 ## Execution Model
 
@@ -283,7 +289,7 @@ Internally, `server.py` uses [Waitress](https://docs.pylonsproject.org/projects/
 
 Actual downloading and parsing of static schedule data is handled in sub-processes, as it is a memory-intensive operation, and we want to allow the system to reclaim that memory after the new schedule has been processed. These sub-processes are simply instances of `gtfs.py`. `server.py` will launch `gtfs.py` in this way on startup (if the current downloaded schedule is out of date, or if the current cache is out of data or invalid). It will also check every hour if there is new static GTFS data (by performing a `HTTP HEAD` request) available and if necessary will launch `gtfs.py` to download it.
 
-`server.py` runs `gtfs.py ` with the `--rebuild-cache` argument, which causes it to re-parse the static GTFS data (which may consume in the region of 1.5 gigabytes of RAM) and write a new `cache.pickle` file (which may take a minute or more depending on your hardware).  After writing the pickle file, the `gtfs.py` process ends, its memory is released, and `server.py` continues execution, by loading or reloading that pickle file, which is a fast operation.
+`server.py` runs `gtfs.py ` with the `--rebuild-cache` argument, which causes it to re-parse the static GTFS data (which can temporarily require substantially more memory) and write a new `cache.pickle` file (which may take a minute or more depending on your hardware).  After writing the pickle file, the `gtfs.py` process ends, its memory is released, and `server.py` continues execution, by loading or reloading that pickle file, which is a fast operation.
 
 ## Advice for high-volume deployments
 

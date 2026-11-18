@@ -121,6 +121,20 @@ class Store:
             if key in ns:
                 del ns[key]
     
+    def contains_key(self, namespace, key):
+        if self.redis:
+            return bool(self.redis.hexists(self._namespace(namespace), key))
+        return key in self.data.get(namespace, {})
+
+    def items(self, namespace):
+        # Snapshot in-process keys because pruning deletes entries as it goes.
+        if self.redis:
+            for key, value in self.redis.hscan_iter(self._namespace(namespace)):
+                yield key, pickle.loads(value)
+        else:
+            for key, value in list(self.data.get(namespace, {}).items()):
+                yield key, value
+
     # set operations including add, remove and has
     def add(self, namespace, value):
         config = self.namespace_config.get(namespace, {})
